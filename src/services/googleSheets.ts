@@ -375,16 +375,16 @@ export async function puxarDadosCompletosDaPlanilha(
   const abaMetas =
     abasDisponiveis.find(a => normalizarNomeAba(a).includes('meta') || normalizarNomeAba(a).includes('reserva')) || 'Metas';
 
-  // 2. Buscar todas as abas em uma única chamada em lote (batchGet)
+  // 2. Buscar todas as abas em uma única chamada em lote (batchGet) a partir da linha 1 para não perder nenhum dado
   const rangesToFetch = [
-    `${encodeURIComponent(abaLancamentos)}!A2:K`,
-    `${encodeURIComponent(abaFixas)}!A2:F`
+    `${encodeURIComponent(abaLancamentos)}!A1:Z500`,
+    `${encodeURIComponent(abaFixas)}!A1:F100`
   ];
   if (abasDisponiveis.includes(abaOrcamento)) {
-    rangesToFetch.push(`${encodeURIComponent(abaOrcamento)}!A2:D`);
+    rangesToFetch.push(`${encodeURIComponent(abaOrcamento)}!A1:D100`);
   }
   if (abasDisponiveis.includes(abaMetas)) {
-    rangesToFetch.push(`${encodeURIComponent(abaMetas)}!A2:E`);
+    rangesToFetch.push(`${encodeURIComponent(abaMetas)}!A1:E100`);
   }
 
   const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${rangesToFetch
@@ -407,50 +407,66 @@ export async function puxarDadosCompletosDaPlanilha(
   const rowsOrcamento: any[][] = valueRanges[2]?.values || [];
   const rowsMetas: any[][] = valueRanges[3]?.values || [];
 
-  // 3. Processar Lançamentos e Rendas Extras COM DEDUPLICAÇÃO INTELIGENTE
+  // 3. Processar Lançamentos e Rendas Extras COM SUPORTE A DADOS DESLOCADOS E DEDUPLICAÇÃO
   const lancamentos: Lancamento[] = [];
   const rendasExtras: RendaExtra[] = [];
   const seenIds = new Set<string>();
   const seenFingerprints = new Set<string>();
   let duplicadosIgnorados = 0;
+  let planilhaPrecisavaCorrecao = false;
 
   rowsLancamentos.forEach((r, index) => {
     if (!r || r.length === 0) return;
 
-    // Ignorar linhas de cabeçalho que tenham sido inseridas ou coladas no meio
-    const c0 = String(r[0] || '').trim().toLowerCase();
-    const c1 = String(r[1] || '').trim().toLowerCase();
-    const c2 = String(r[2] || '').trim().toLowerCase();
+    // Detectar se os dados estão nas colunas A..K ou se foram inseridos a partir da coluna L (índice 11)
+    let cols = r;
+    if ((!r[0] && !r[1] && !r[2]) && (r[11] || r[12] || r[13])) {
+      cols = r.slice(11);
+      planilhaPrecisavaCorrecao = true;
+    }
+
+    // Ignorar linhas de cabeçalho
+    const c0 = String(cols[0] || '').trim().toLowerCase();
+    const c1 = String(cols[1] || '').trim().toLowerCase();
+    const c2 = String(cols[2] || '').trim().toLowerCase();
+    const c3 = String(cols[3] || '').trim().toLowerCase();
     if (
       c0 === 'id' ||
       c0 === 'data' ||
+      c0 === 'código' ||
+      c0 === 'codigo' ||
       c1 === 'data' ||
       c1 === 'valor' ||
       c2 === 'valor' ||
-      c0.startsWith('código') ||
-      c0.startsWith('codigo')
+      c2.includes('valor') ||
+      c3 === 'categoria'
     ) {
       return;
     }
 
-    // Detectar dinamicamente se a coluna A é ID ou se o usuário começou direto pela Data
-    const r0EhData =
-      r[0] &&
-      (/^\d{4}-\d{2}-\d{2}/.test(String(r[0])) ||
-        /^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(String(r[0])) ||
-        (typeof r[0] === 'number' && r[0] > 30000 && r[0] < 80000));
+    // Se na linha 1 (index === 0) tínhamos dados reais em vez de cabeçalho, a planilha precisa de cabeçalhos
+    if (index === 0) {
+      planilhaPrecisavaCorrecao = true;
+    }
 
-    let idRaw = r0EhData ? undefined : r[0];
-    let dataRaw = r0EhData ? r[0] : r[1];
-    let valorRaw = r0EhData ? r[1] : r[2];
-    let catRaw = r0EhData ? r[2] : r[3];
-    let subcatRaw = r0EhData ? r[3] : r[4];
-    let quemRaw = r0EhData ? r[4] : r[5];
-    let estRaw = r0EhData ? r[5] : r[6];
-    let formaRaw = r0EhData ? r[6] : r[7];
-    let essRaw = r0EhData ? r[7] : r[8];
-    let obsRaw = r0EhData ? r[8] : r[9];
-    let criadoRaw = r0EhData ? undefined : r[10];
+    // Detectar dinamicamente se a primeira coluna é ID ou se o usuário começou direto pela Data
+    const r0EhData =
+      cols[0] &&
+      (/^\d{4}-\d{2}-\d{2}/.test(String(cols[0])) ||
+        /^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(String(cols[0])) ||
+        (typeof cols[0] === 'number' && cols[0] > 30000 && cols[0] < 80000));
+
+    let idRaw = r0EhData ? undefined : cols[0];
+    let dataRaw = r0EhData ? cols[0] : cols[1];
+    let valorRaw = r0EhData ? cols[1] : cols[2];
+    let catRaw = r0EhData ? cols[2] : cols[3];
+    let subcatRaw = r0EhData ? cols[3] : cols[4];
+    let quemRaw = r0EhData ? cols[4] : cols[5];
+    let estRaw = r0EhData ? cols[5] : cols[6];
+    let formaRaw = r0EhData ? cols[6] : cols[7];
+    let essRaw = r0EhData ? cols[7] : cols[8];
+    let obsRaw = r0EhData ? cols[8] : cols[9];
+    let criadoRaw = r0EhData ? undefined : cols[10];
 
     const valor = normalizarValorNumerico(valorRaw);
     if (valor <= 0) return; // Se não tem valor monetário positivo, ignora
@@ -469,10 +485,12 @@ export async function puxarDadosCompletosDaPlanilha(
 
     if (idLimpo && seenIds.has(idLimpo)) {
       duplicadosIgnorados++;
+      planilhaPrecisavaCorrecao = true;
       return;
     }
     if (seenFingerprints.has(fingerprint)) {
       duplicadosIgnorados++;
+      planilhaPrecisavaCorrecao = true;
       return;
     }
 
@@ -482,7 +500,7 @@ export async function puxarDadosCompletosDaPlanilha(
     const catLower = categoria.toLowerCase();
     if (catLower === 'renda extra' || catLower === 'receita') {
       rendasExtras.push({
-        id: idLimpo || `renda-sinc-${index}-${Date.now()}`,
+        id: idLimpo || `renda-${Date.now()}-${rendasExtras.length}`,
         data,
         mes_ref,
         valor,
@@ -495,7 +513,7 @@ export async function puxarDadosCompletosDaPlanilha(
       });
     } else {
       lancamentos.push({
-        id: idLimpo || `sinc-${index}-${Date.now()}`,
+        id: idLimpo || `lan-${Date.now()}-${lancamentos.length}`,
         data,
         mes_ref,
         valor,
@@ -513,7 +531,18 @@ export async function puxarDadosCompletosDaPlanilha(
     }
   });
 
-  // 4. Processar Contas Fixas (Aluguel, Condomínio, etc. com valores editados)
+  // AUTO-CORREÇÃO DA PLANILHA:
+  // Se a planilha tinha dados deslocados na coluna L, sem cabeçalhos ou duplicados,
+  // nós regravamos a aba Lancamentos perfeitamente alinhada em A..K com cabeçalhos!
+  if (planilhaPrecisavaCorrecao) {
+    try {
+      await sincronizarTudoSemDuplicar(spreadsheetId, lancamentos, rendasExtras);
+    } catch (e) {
+      console.warn('Aviso na auto-correção da planilha:', e);
+    }
+  }
+
+  // 4. Processar Contas Fixas (Aluguel, Condomínio, etc. com status de pago)
   const fixas: ContaFixa[] = [];
   rowsFixas.forEach(rf => {
     if (!rf || rf.length < 2) return;
@@ -524,7 +553,7 @@ export async function puxarDadosCompletosDaPlanilha(
     const dia = parseInt(String(rf[2]), 10) || 10;
     const cat = String(rf[3] || 'Moradia').trim();
     const ativo = rf[4] === 'N' ? 'N' : 'S';
-    const pagoMesRef = rf[5] ? String(rf[5]).trim() : undefined;
+    const pagoMesRef = rf[5] ? String(rf[5]).trim() : '';
 
     fixas.push({
       descricao: desc,
@@ -864,7 +893,7 @@ export async function substituirLancamentosNaPlanilha(
 }
 
 /**
- * Atualiza e sincroniza a aba 'Fixas' completa na planilha
+ * Atualiza e sincroniza a aba 'Fixas' completa na planilha (incluindo status de pago)
  */
 export async function sincronizarFixasNaPlanilha(
   spreadsheetId: string,
@@ -874,18 +903,8 @@ export async function sincronizarFixasNaPlanilha(
     const token = await getAccessToken();
     if (!token) return false;
 
-    // 1. Limpar linhas anteriores
-    await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Fixas!A2:F:clear`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      }
-    );
-
-    if (fixas.length === 0) return true;
-
-    // 2. Preencher com as fixas atuais
+    // Cabeçalho padrão garantido na linha 1
+    const cabecalho = [['Descrição', 'Valor (R$)', 'Dia Vencimento', 'Categoria', 'Ativo', 'Pago']];
     const linhas = fixas.map(f => [
       f.descricao,
       f.valor,
@@ -896,7 +915,7 @@ export async function sincronizarFixasNaPlanilha(
     ]);
 
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Fixas!A2:F?valueInputOption=USER_ENTERED`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Fixas!A1:F${Math.max(10, linhas.length + 1)}?valueInputOption=USER_ENTERED`,
       {
         method: 'PUT',
         headers: {
@@ -904,8 +923,8 @@ export async function sincronizarFixasNaPlanilha(
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          range: 'Fixas!A2:F',
-          values: linhas
+          range: `Fixas!A1:F${linhas.length + 1}`,
+          values: [...cabecalho, ...linhas]
         })
       }
     );
@@ -973,6 +992,7 @@ export async function anexarRendaExtraNaPlanilha(
 
 /**
  * Reescreve a lista completa de lançamentos e rendas extras na planilha de forma limpa e sem duplicados
+ * Sempre garante os cabeçalhos na linha 1 e dados nas colunas A até K.
  */
 export async function sincronizarTudoSemDuplicar(
   spreadsheetId: string,
@@ -985,6 +1005,26 @@ export async function sincronizarTudoSemDuplicar(
 
     // 1. Limpar todas as linhas anteriores para evitar qualquer duplicata ou dado antigo
     await limparLinhasDeDadosLancamentos(spreadsheetId);
+
+    // 2. Garantir cabeçalhos padrão na linha 1
+    const cabecalhos = [
+      ['ID', 'Data', 'Valor (R$)', 'Categoria', 'Subcategoria', 'Quem', 'Estabelecimento', 'Forma Pagamento', 'Essencial', 'Observação', 'Criado Em']
+    ];
+
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A1:K1?valueInputOption=USER_ENTERED`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          range: 'Lancamentos!A1:K1',
+          values: cabecalhos
+        })
+      }
+    );
 
     // Linhas de despesas
     const linhasDespesas = lancamentos.map(l => [
@@ -1023,7 +1063,7 @@ export async function sincronizarTudoSemDuplicar(
     }
 
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K?valueInputOption=USER_ENTERED`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K${todasLinhas.length + 1}?valueInputOption=USER_ENTERED`,
       {
         method: 'PUT',
         headers: {
@@ -1031,7 +1071,7 @@ export async function sincronizarTudoSemDuplicar(
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          range: 'Lancamentos!A2:K',
+          range: `Lancamentos!A2:K${todasLinhas.length + 1}`,
           values: todasLinhas
         })
       }
@@ -1069,7 +1109,7 @@ export async function limparDuplicadosDaPlanilha(
 
   // 1. Ler as linhas brutas da aba Lancamentos para contar o total antes da limpeza
   const rawRes = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A1:Z500`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
 
@@ -1079,17 +1119,17 @@ export async function limparDuplicadosDaPlanilha(
     totalLinhasBrutas = (rawJson.values || []).filter((r: any[]) => r && r.length > 0).length;
   }
 
-  // 2. Puxar com o algoritmo de deduplicação inteligente
+  // 2. Puxar com o algoritmo de deduplicação inteligente e correção de colunas
   const dados = await puxarDadosCompletosDaPlanilha(spreadsheetId);
   const totalUnicos = dados.lancamentos.length + dados.rendasExtras.length;
-  const duplicadosRemovidos = Math.max(0, totalLinhasBrutas - totalUnicos);
+  const duplicadosRemovidos = Math.max(0, totalLinhasBrutas - totalUnicos - 1); // -1 por causa do cabeçalho
 
   // 3. Reescrever a aba Lancamentos com APENAS os itens únicos
   await sincronizarTudoSemDuplicar(spreadsheetId, dados.lancamentos, dados.rendasExtras);
 
   return {
     sucesso: true,
-    duplicadosRemovidos,
+    duplicadosRemovidos: Math.max(0, duplicadosRemovidos),
     totalRestante: totalUnicos,
     lancamentos: dados.lancamentos,
     rendasExtras: dados.rendasExtras,
@@ -1102,7 +1142,7 @@ export async function limparDuplicadosDaPlanilha(
 
 /**
  * Zera completamente os lançamentos da planilha e do app para começar do zero
- * Mantém os cabeçalhos, categorias, contas fixas e orçamentos intactos.
+ * Mantém os cabeçalhos na linha 1 intactos, categorias, contas fixas e orçamentos.
  */
 export async function zerarPlanilhaERecomessar(
   spreadsheetId: string
@@ -1114,6 +1154,26 @@ export async function zerarPlanilhaERecomessar(
 
   // Limpar todas as linhas de dados da aba Lancamentos de forma garantida
   await limparLinhasDeDadosLancamentos(spreadsheetId);
+
+  // Garantir cabeçalhos padrão na linha 1
+  const cabecalhos = [
+    ['ID', 'Data', 'Valor (R$)', 'Categoria', 'Subcategoria', 'Quem', 'Estabelecimento', 'Forma Pagamento', 'Essencial', 'Observação', 'Criado Em']
+  ];
+
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A1:K1?valueInputOption=USER_ENTERED`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        range: 'Lancamentos!A1:K1',
+        values: cabecalhos
+      })
+    }
+  );
 
   // Limpar também no localStorage local para que o app fique sincronizado
   try {
@@ -1127,6 +1187,6 @@ export async function zerarPlanilhaERecomessar(
 
   return {
     sucesso: true,
-    mensagem: 'Planilha e aplicativo zerados com sucesso! A aba Lancamentos agora está em branco (apenas cabeçalhos).'
+    mensagem: 'Planilha e aplicativo zerados com sucesso! A aba Lancamentos agora tem apenas os cabeçalhos, pronta para seus gastos reais.'
   };
 }

@@ -118,9 +118,16 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
   const [rendaCategoria, setRendaCategoria] = useState(CATEGORIAS_RENDA_EXTRA[0].nome);
   const [rendaFormaRecebimento, setRendaFormaRecebimento] = useState('Pix');
 
-  const handleToggleFixa = (descricao: string) => {
+  const handleToggleFixa = async (descricao: string) => {
     const novoEstado = alternarStatusContaFixa(descricao, appState);
     setAppState(novoEstado);
+
+    const planilha = obterPlanilhaConectada();
+    if (planilha) {
+      setSincronizando(true);
+      await sincronizarFixasNaPlanilha(planilha.id, novoEstado.fixas);
+      setSincronizando(false);
+    }
   };
 
   const handleAbrirEdicaoFixa = (f: ContaFixa) => {
