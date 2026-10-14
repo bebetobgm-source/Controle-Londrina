@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import {
   obterPlanilhaConectada,
+  salvarPlanilhaConectada,
+  extrairSpreadsheetId,
   puxarDadosCompletosDaPlanilha,
   buscarPlanilhaNoDrive
 } from './services/googleSheets';
@@ -33,6 +35,36 @@ export default function App() {
   const [alertaCriticoDispensado, setAlertaCriticoDispensado] = useState<boolean>(false);
   const [sincronizandoNuvem, setSincronizandoNuvem] = useState<boolean>(false);
   const [statusSincronizacao, setStatusSincronizacao] = useState<'ocioso' | 'sincronizando' | 'sincronizado'>('ocioso');
+  const [isInAppBrowser, setIsInAppBrowser] = useState<boolean>(false);
+
+  // 1. Detectar parâmetro de URL (?planilha=ID ou ?sheet=ID) para conexão instantânea entre o casal
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const sheetParam = params.get('planilha') || params.get('sheet') || params.get('sheetId');
+      if (sheetParam) {
+        const idLimpo = extrairSpreadsheetId(sheetParam);
+        if (idLimpo) {
+          salvarPlanilhaConectada(idLimpo, 'Orçamento Doméstico Londrina (Casal)');
+          console.log('Planilha vinculada via link compartilhado:', idLimpo);
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao processar parâmetros da URL:', e);
+    }
+  }, []);
+
+  // 2. Detectar se foi aberto dentro do navegador embutido do WhatsApp ou Instagram
+  useEffect(() => {
+    try {
+      const ua = navigator.userAgent || navigator.vendor || (window as any).opera || '';
+      if (/FBAN|FBAV|Instagram|WhatsApp|Line|wv/i.test(ua)) {
+        setIsInAppBrowser(true);
+      }
+    } catch (e) {
+      // Ignora erro
+    }
+  }, []);
 
   // SINCRONIZAÇÃO AUTOMÁTICA EM SEGUNDO PLANO:
   // Ao abrir o app ou ao conectar a conta Google, busca a planilha e popula automaticamente
@@ -122,6 +154,31 @@ export default function App() {
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center">
       {/* Container Mobile-first (390px - 440px) */}
       <main className="w-full max-w-md px-4 flex-1 flex flex-col">
+        {/* Aviso de Navegador Interno do WhatsApp/Instagram (bloqueia login Google) */}
+        {isInAppBrowser && (
+          <div className="mt-2 rounded-xl bg-amber-950/80 border border-amber-600/50 p-3 text-xs text-amber-200 animate-in fade-in">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-amber-300">Atenção ao conectar com o Google no celular:</p>
+                  <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                    Você abriu pelo navegador do WhatsApp. O Google bloqueia login aqui. Toque nos <strong>3 pontinhos ⋮</strong> no topo (ou compartilhar no iPhone) e escolha <strong>"Abrir no Chrome"</strong> ou <strong>"Abrir no Safari"</strong>.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsInAppBrowser(false)}
+                className="text-amber-400 hover:text-white p-1"
+                title="Fechar aviso"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Barra Superior do App */}
         <header className="pt-4 pb-2 border-b border-neutral-800/80 flex items-center justify-between">
           <div>

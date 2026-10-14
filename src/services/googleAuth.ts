@@ -68,7 +68,19 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Erro no login Google:', error);
-    throw error;
+    let mensagemTratada = error.message || 'Falha ao autenticar com o Google.';
+    if (error.code === 'auth/popup-closed-by-user') {
+      mensagemTratada = 'A janela de login do Google foi fechada antes de concluir.';
+    } else if (error.code === 'auth/popup-blocked') {
+      mensagemTratada = 'O navegador bloqueou a janela pop-up do Google. Toque em "Permitir pop-ups" nas configurações do Safari/Chrome.';
+    } else if (error.code === 'auth/cancelled-popup-request') {
+      mensagemTratada = 'Solicitação de login cancelada.';
+    } else if (error.message?.includes('access_denied') || error.code === 'auth/unauthorized-domain') {
+      mensagemTratada = 'Acesso restrito pelo Google (Erro 403 access_denied). Siga as orientações na tela para autorizar.';
+    }
+    const err = new Error(mensagemTratada);
+    (err as any).code = error.code;
+    throw err;
   } finally {
     isSigningIn = false;
   }

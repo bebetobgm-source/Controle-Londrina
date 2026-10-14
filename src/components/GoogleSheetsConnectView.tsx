@@ -41,7 +41,11 @@ import {
   ArrowUpToLine,
   Lock,
   Trash2,
-  CheckCheck
+  CheckCheck,
+  Share2,
+  Smartphone,
+  HelpCircle,
+  ShieldAlert
 } from 'lucide-react';
 import { gasFiles } from '../data/gasCode';
 
@@ -65,6 +69,33 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
   const [mostrarCodigoAvancado, setMostrarCodigoAvancado] = useState<boolean>(false);
   const [arquivoGasSelecionado, setArquivoGasSelecionado] = useState<string>('Inicializar.gs');
   const [copiadoGas, setCopiadoGas] = useState<boolean>(false);
+
+  // Compartilhamento com esposa/cônjuge
+  const [copiadoLinkEsposa, setCopiadoLinkEsposa] = useState<boolean>(false);
+  const [mostrarGuiaEsposa, setMostrarGuiaEsposa] = useState<boolean>(false);
+
+  const obterLinkEsposa = () => {
+    if (!planilha) return window.location.href;
+    const baseUrl = `${window.location.origin}${window.location.pathname}`;
+    return `${baseUrl}?planilha=${planilha.id}`;
+  };
+
+  const obterTextoCompartilhamento = () => {
+    const link = obterLinkEsposa();
+    return `Oi amor! Esse é o link do nosso app de orçamento doméstico:\n${link}\n\n⚠️ Dica importante para entrar no celular:\n1. Abra no Chrome ou Safari (não abra dentro do navegador do WhatsApp).\n2. Ao clicar em 'Entrar com o Google', se aparecer a tela de aviso 'O Google não verificou este app', clique no link cinza 'Avançado' no canto inferior esquerdo e depois em 'Acessar (não seguro)'.\n3. Marque a permissão e pronto! Os dados já vão estar sincronizados.`;
+  };
+
+  const handleCopiarLinkEsposa = () => {
+    const texto = obterTextoCompartilhamento();
+    navigator.clipboard.writeText(texto);
+    setCopiadoLinkEsposa(true);
+    setTimeout(() => setCopiadoLinkEsposa(false), 3000);
+  };
+
+  const handleAbrirWhatsAppEsposa = () => {
+    const texto = obterTextoCompartilhamento();
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(texto)}`, '_blank');
+  };
 
   // Confirmação para sobrescrever dados
   const [modalConfirmacao, setModalConfirmacao] = useState<{
@@ -443,6 +474,58 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
                 Seus dados ficam 100% no seu próprio Google Drive e Google Sheets. Apenas você e seu cônjuge têm acesso.
               </span>
             </div>
+
+            {/* Guia visual para o cônjuge / celular da esposa */}
+            <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-xs font-bold text-sky-300">
+                  <Smartphone className="h-4 w-4 text-sky-400" />
+                  Conectando no celular da esposa?
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setMostrarGuiaEsposa(!mostrarGuiaEsposa)}
+                  className="text-[11px] text-sky-400 hover:text-sky-300 font-medium flex items-center gap-0.5"
+                >
+                  <span>{mostrarGuiaEsposa ? 'Ocultar' : 'Ver o que fazer'}</span>
+                  {mostrarGuiaEsposa ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+
+              {mostrarGuiaEsposa && (
+                <div className="space-y-2 text-[11px] text-neutral-300 pt-1 border-t border-sky-900/40 animate-in fade-in">
+                  <div className="p-2 rounded-lg bg-neutral-950/60 border border-neutral-800 space-y-1">
+                    <p className="font-bold text-amber-300 flex items-center gap-1">
+                      <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
+                      1. Tela "O Google não verificou este app":
+                    </p>
+                    <p className="text-neutral-400 leading-relaxed">
+                      Como o aplicativo é de uso pessoal e conecta diretamente à planilha de vocês no Google Drive, o Google exibe uma tela amarela de aviso padrão. Basta clicar no link cinza pequeno <strong>"Avançado"</strong> (no canto inferior esquerdo) e depois em <strong>"Acessar Orçamento Londrina (não seguro)"</strong>. Marque as permissões e confirme.
+                    </p>
+                  </div>
+
+                  <div className="p-2 rounded-lg bg-neutral-950/60 border border-neutral-800 space-y-1">
+                    <p className="font-bold text-sky-300 flex items-center gap-1">
+                      <Smartphone className="h-3.5 w-3.5 text-sky-400" />
+                      2. Abra no Chrome ou Safari (não dentro do WhatsApp):
+                    </p>
+                    <p className="text-neutral-400 leading-relaxed">
+                      Se você tocou no link pelo WhatsApp, o navegador do WhatsApp bloqueia logins do Google (erro <em>disallowed_useragent</em>). Toque nos 3 pontinhos ⋮ no topo e escolha <strong>"Abrir no Chrome"</strong> ou <strong>"Abrir no Safari"</strong>.
+                    </p>
+                  </div>
+
+                  <div className="p-2 rounded-lg bg-neutral-950/60 border border-neutral-800 space-y-1">
+                    <p className="font-bold text-emerald-300 flex items-center gap-1">
+                      <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />
+                      3. Conectar a mesma planilha:
+                    </p>
+                    <p className="text-neutral-400 leading-relaxed">
+                      Se a esposa for entrar com o próprio Gmail dela, o marido deve compartilhar a planilha no Google Sheets com ela dando permissão de <strong>Editor</strong>. Ou ela pode simplesmente entrar com a conta Google principal do casal.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -539,6 +622,65 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
                     <ArrowUpToLine className="h-4 w-4 text-sky-400" />
                     <span>Enviar Sem Duplicar</span>
                   </button>
+                </div>
+
+                {/* Compartilhar link de acesso com o cônjuge */}
+                <div className="rounded-xl border border-sky-600/30 bg-sky-950/20 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                        <Share2 className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-white">Conectar Celular da Esposa</p>
+                        <p className="text-[10px] text-neutral-400">Compartilhe o link já configurado com a planilha</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-neutral-300 leading-relaxed">
+                    Envie o link do app para sua esposa. Ao abrir no celular dela, o app conecta automaticamente à mesma planilha oficial de vocês!
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-2 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={handleCopiarLinkEsposa}
+                      className="flex items-center justify-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800/90 hover:bg-neutral-700/90 px-2.5 py-2 text-xs font-semibold text-white transition-colors active:scale-98"
+                    >
+                      {copiadoLinkEsposa ? (
+                        <>
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                          <span className="text-emerald-300">Copiado!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5 text-neutral-300" />
+                          <span>Copiar Link</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleAbrirWhatsAppEsposa}
+                      className="flex items-center justify-center gap-1.5 rounded-lg border border-emerald-600/50 bg-emerald-600/20 hover:bg-emerald-600/30 px-2.5 py-2 text-xs font-bold text-emerald-300 transition-colors active:scale-98"
+                    >
+                      <Share2 className="h-3.5 w-3.5" />
+                      <span>Enviar no WhatsApp</span>
+                    </button>
+                  </div>
+
+                  {/* Dica para autorização no Google */}
+                  <div className="p-2.5 rounded-lg bg-neutral-950/70 border border-neutral-800 text-[10px] text-neutral-300 space-y-1">
+                    <p className="font-semibold text-amber-300 flex items-center gap-1">
+                      <ShieldAlert className="h-3 w-3 text-amber-400" />
+                      Como ela deve autorizar no celular dela:
+                    </p>
+                    <p className="text-neutral-400 leading-relaxed">
+                      Ao tocar em "Entrar com o Google", se o Google exibir a tela amarela <em>"O Google não verificou este app"</em>, ela deve clicar em <strong>"Avançado"</strong> (link cinza no canto inferior esquerdo) e depois em <strong>"Acessar (não seguro)"</strong> para liberar o acesso à planilha.
+                    </p>
+                  </div>
                 </div>
 
                 {/* Ferramentas de Limpeza: Eliminar Duplicados e Zerar Planilha */}
