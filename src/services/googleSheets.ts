@@ -232,56 +232,341 @@ export async function anexarLancamentoNaPlanilha(
 }
 
 /**
- * Sincroniza e puxa os lançamentos existentes do Google Sheets para o App
+ * Normaliza qualquer formato de valor numérico brasileiro ou internacional
+ * (ex: "75", "75,00", "75.00", "R$ 1.250,50", 1250.50)
  */
-export async function puxarLancamentosDaPlanilha(spreadsheetId: string): Promise<Lancamento[]> {
+export function normalizarValorNumerico(raw: any): number {
+  if (typeof raw === 'number') return isNaN(raw) ? 0 : raw;
+  if (!raw) return 0;
+  let str = String(raw).replace(/[R$\s]/g, '').trim();
+  if (!str) return 0;
+  // Se contiver tanto ponto quanto vírgula (ex: 1.250,50)
+  if (str.includes(',') && str.includes('.')) {
+    str = str.replace(/\./g, '').replace(',', '.');
+  } else if (str.includes(',')) {
+    // Se for formato BR com vírgula decimal (ex: 75,50)
+    str = str.replace(',', '.');
+  }
+  const val = parseFloat(str);
+  return isNaN(val) ? 0 : val;
+}
+
+/**
+ * Normaliza qualquer data para ISO AAAA-MM-DD e extrai o mes_ref AAAA-MM
+ * (suporta "14/10/2026", "2026-10-14", "14/10/26", etc.)
+ */
+export function normalizarDataISO(raw: any): { data: string; mes_ref: string } {
+  const agora = new Date();
+  const mesAtualPadrao = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+  const dataHojePadrao = `${mesAtualPadrao}-${String(agora.getDate()).padStart(2, '0')}`;
+
+  if (!raw) {
+    return { data: dataHojePadrao, mes_ref: mesAtualPadrao };
+  }
+
+  const str = String(raw).trim();
+
+  // Se já for YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const data = str.substring(0, 10);
+    return { data, mes_ref: data.substring(0, 7) };
+  }
+
+  // Se for DD/MM/YYYY
+  const brMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (brMatch) {
+    const dia = brMatch[1].padStart(2, '0');
+    const mes = brMatch[2].padStart(2, '0');
+    const ano = brMatch[3];
+    return { data: `${ano}-${mes}-${dia}`, mes_ref: `${ano}-${mes}` };
+  }
+
+  // Se for DD/MM/YY
+  const brShortMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})/);
+  if (brShortMatch) {
+    const dia = brShortMatch[1].padStart(2, '0');
+    const mes = brShortMatch[2].padStart(2, '0');
+    const ano = `20${brShortMatch[3]}`;
+    return { data: `${ano}-${mes}-${dia}`, mes_ref: `${ano}-${mes}` };
+  }
+
+  return { data: dataHojePadrao, mes_ref: mesAtualPadrao };
+}
+
+export interface ResultadoSincronizacaoPlanilha {
+  sucesso: boolean;
+  lancamentos: Lancamento[];
+  rendasExtras: RendaExtra[];
+  fixas: ContaFixa[];
+  orcamento?: OrcamentoItem[];
+  reserva?: TransacaoReserva[];
+  totalLancamentos: number;
+  totalRendas: number;
+  totalFixas: number;
+  mensagem: string;
+}
+
+/**
+ * Puxa todos os dados das abas do Google Sheets (Lancamentos, Rendas Extras, Fixas, etc.)
+ * e os normaliza para sincronizar fielmente com o aplicativo no computador ou celular.
+ */
+export async function puxarDadosCompletosDaPlanilha(
+  spreadsheetId: string
+): Promise<ResultadoSincronizacaoPlanilha> {
   const token = await getAccessToken();
   if (!token) {
-    throw new Error('Você precisa fazer login com o Google para sincronizar.');
+    throw new Error('Você precisa fazer login com sua conta Google para sincronizar.');
   }
 
-  const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K`,
-    {
-      headers: { Authorization: `Bearer ${token}` }
-    }
+  // 1. Obter metadados da planilha para identificar nomes reais das abas
+  const metaRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`,
+    { headers: { Authorization: `Bearer ${token}` } }
   );
 
-  if (!res.ok) {
-    throw new Error('Não foi possível ler os lançamentos da planilha.');
+  if (!metaRes.ok) {
+    const erroJson = await metaRes.json().catch(() => ({}));
+    throw new Error(
+      erroJson.error?.message ||
+        'Não foi possível acessar a planilha. Verifique as permissões da sua conta Google.'
+    );
   }
 
-  const json = await res.json();
-  const rows: any[][] = json.values || [];
+  const metaData = await metaRes.json();
+  const abasDisponiveis: string[] = (metaData.sheets || []).map((s: any) => s.properties?.title || '');
 
-  const lancamentos: Lancamento[] = rows
-    .filter(r => r[0] && r[1] && r[2])
-    .map((r, index) => {
-      const valorNumerico = typeof r[2] === 'number'
-        ? r[2]
-        : parseFloat(String(r[2]).replace('R$', '').replace(/\./g, '').replace(',', '.').trim()) || 0;
+  const normalizarNomeAba = (str: string) =>
+    str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-      const dataStr = String(r[1] || new Date().toISOString().split('T')[0]);
-      const mesRef = dataStr.substring(0, 7);
+  const abaLancamentos =
+    abasDisponiveis.find(a => normalizarNomeAba(a).includes('lancamento')) || 'Lancamentos';
+  const abaFixas =
+    abasDisponiveis.find(a => normalizarNomeAba(a).includes('fixa')) || 'Fixas';
+  const abaOrcamento =
+    abasDisponiveis.find(a => normalizarNomeAba(a).includes('orcamento')) || 'Orcamento';
+  const abaMetas =
+    abasDisponiveis.find(a => normalizarNomeAba(a).includes('meta') || normalizarNomeAba(a).includes('reserva')) || 'Metas';
 
-      return {
-        id: String(r[0] || `sinc-${index}-${Date.now()}`),
-        data: dataStr,
-        valor: valorNumerico,
-        categoria: String(r[3] || 'Mercado'),
-        subcategoria: String(r[4] || 'Geral'),
-        quem: (r[5] === 'Ela' || r[5] === 'Conjunto' ? r[5] : 'Ele') as any,
-        estabelecimento: r[6] ? String(r[6]) : undefined,
-        forma_pagamento: (['Pix', 'Débito', 'Crédito', 'Dinheiro'].includes(r[7]) ? r[7] : 'Débito') as any,
-        essencial: (r[8] === 'N' ? 'N' : 'S') as any,
-        observacao: r[9] ? String(r[9]) : undefined,
-        mes_ref: mesRef,
-        criado_em: String(r[10] || new Date().toISOString())
-      };
+  // 2. Buscar todas as abas em uma única chamada em lote (batchGet)
+  const rangesToFetch = [
+    `${encodeURIComponent(abaLancamentos)}!A2:K`,
+    `${encodeURIComponent(abaFixas)}!A2:F`
+  ];
+  if (abasDisponiveis.includes(abaOrcamento)) {
+    rangesToFetch.push(`${encodeURIComponent(abaOrcamento)}!A2:D`);
+  }
+  if (abasDisponiveis.includes(abaMetas)) {
+    rangesToFetch.push(`${encodeURIComponent(abaMetas)}!A2:E`);
+  }
+
+  const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${rangesToFetch
+    .map(r => `ranges=${r}`)
+    .join('&')}`;
+
+  const batchRes = await fetch(batchUrl, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+
+  if (!batchRes.ok) {
+    throw new Error('Falha ao ler os dados das abas da planilha.');
+  }
+
+  const batchJson = await batchRes.json();
+  const valueRanges: any[] = batchJson.valueRanges || [];
+
+  const rowsLancamentos: any[][] = valueRanges[0]?.values || [];
+  const rowsFixas: any[][] = valueRanges[1]?.values || [];
+  const rowsOrcamento: any[][] = valueRanges[2]?.values || [];
+  const rowsMetas: any[][] = valueRanges[3]?.values || [];
+
+  // 3. Processar Lançamentos e Rendas Extras
+  const lancamentos: Lancamento[] = [];
+  const rendasExtras: RendaExtra[] = [];
+
+  rowsLancamentos.forEach((r, index) => {
+    if (!r || r.length === 0) return;
+
+    // Detectar dinamicamente se a coluna A é ID ou se o usuário começou direto pela Data
+    const r0EhData =
+      r[0] &&
+      (/^\d{4}-\d{2}-\d{2}/.test(String(r[0])) || /^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(String(r[0])));
+
+    let idRaw = r0EhData ? undefined : r[0];
+    let dataRaw = r0EhData ? r[0] : r[1];
+    let valorRaw = r0EhData ? r[1] : r[2];
+    let catRaw = r0EhData ? r[2] : r[3];
+    let subcatRaw = r0EhData ? r[3] : r[4];
+    let quemRaw = r0EhData ? r[4] : r[5];
+    let estRaw = r0EhData ? r[5] : r[6];
+    let formaRaw = r0EhData ? r[6] : r[7];
+    let essRaw = r0EhData ? r[7] : r[8];
+    let obsRaw = r0EhData ? r[8] : r[9];
+    let criadoRaw = r0EhData ? undefined : r[10];
+
+    const valor = normalizarValorNumerico(valorRaw);
+    if (valor <= 0 && !dataRaw) return;
+
+    const { data, mes_ref } = normalizarDataISO(dataRaw);
+    const categoria = String(catRaw || 'Mercado').trim();
+    const subcategoria = String(subcatRaw || 'Geral').trim();
+    const quem = quemRaw === 'Ela' || quemRaw === 'Conjunto' ? quemRaw : 'Ele';
+
+    // Se a categoria for "Renda Extra" ou "Receita", separar para rendas extras
+    const catLower = categoria.toLowerCase();
+    if (catLower === 'renda extra' || catLower === 'receita') {
+      rendasExtras.push({
+        id: String(idRaw || `renda-sinc-${index}-${Date.now()}`),
+        data,
+        mes_ref,
+        valor,
+        categoria: subcategoria || 'Outros',
+        descricao: String(estRaw || obsRaw || 'Renda Extra').trim(),
+        quem,
+        forma_recebimento: formaRaw || 'Pix',
+        observacao: obsRaw ? String(obsRaw) : undefined,
+        criado_em: String(criadoRaw || new Date().toISOString())
+      });
+    } else {
+      lancamentos.push({
+        id: String(idRaw || `sinc-${index}-${Date.now()}`),
+        data,
+        mes_ref,
+        valor,
+        categoria: categoria || 'Mercado',
+        subcategoria: subcategoria || 'Geral',
+        quem,
+        estabelecimento: estRaw ? String(estRaw) : undefined,
+        forma_pagamento: (['Pix', 'Débito', 'Crédito', 'Dinheiro'].includes(formaRaw)
+          ? formaRaw
+          : 'Débito') as any,
+        essencial: (essRaw === 'N' ? 'N' : 'S') as any,
+        observacao: obsRaw ? String(obsRaw) : undefined,
+        criado_em: String(criadoRaw || new Date().toISOString())
+      });
+    }
+  });
+
+  // 4. Processar Contas Fixas (Aluguel, Condomínio, etc. com valores editados)
+  const fixas: ContaFixa[] = [];
+  rowsFixas.forEach(rf => {
+    if (!rf || rf.length < 2) return;
+    const desc = String(rf[0]).trim();
+    if (!desc || desc.toLowerCase() === 'descrição' || desc.toLowerCase() === 'descricao') return;
+
+    const valor = normalizarValorNumerico(rf[1]);
+    const dia = parseInt(String(rf[2]), 10) || 10;
+    const cat = String(rf[3] || 'Moradia').trim();
+    const ativo = rf[4] === 'N' ? 'N' : 'S';
+    const pagoMesRef = rf[5] ? String(rf[5]).trim() : undefined;
+
+    fixas.push({
+      descricao: desc,
+      valor,
+      dia_vencimento: Math.min(31, Math.max(1, dia)),
+      categoria: cat,
+      ativo,
+      pago_mes_ref: pagoMesRef
     });
+  });
+
+  // 5. Processar Orçamento (se disponível)
+  let orcamento: OrcamentoItem[] | undefined = undefined;
+  if (rowsOrcamento.length > 0) {
+    orcamento = rowsOrcamento
+      .filter(ro => ro && ro[1] && ro[2])
+      .map(ro => ({
+        mes_ref: String(ro[0] || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`),
+        categoria: String(ro[1]),
+        teto: normalizarValorNumerico(ro[2]),
+        tipo: (ro[3] === 'Fixo' ? 'Fixo' : 'Variável') as any
+      }))
+      .filter(o => o.categoria.toLowerCase() !== 'categoria');
+  }
+
+  // 6. Processar Metas / Reserva (se disponível)
+  let reserva: TransacaoReserva[] | undefined = undefined;
+  if (rowsMetas.length > 0) {
+    let acumulado = 2000;
+    reserva = rowsMetas
+      .filter(rm => rm && rm[1] && rm[3])
+      .map((rm, idx) => {
+        const { data } = normalizarDataISO(rm[1]);
+        const valor = normalizarValorNumerico(rm[3]);
+        const tipo = (rm[2] === 'Retirada' ? 'Retirada' : 'Aporte') as any;
+        const saldoDireto = normalizarValorNumerico(rm[5]);
+        if (saldoDireto > 0) {
+          acumulado = saldoDireto;
+        } else {
+          acumulado += tipo === 'Aporte' ? valor : -valor;
+        }
+        return {
+          id: String(rm[0] || `reserva-sinc-${idx}`),
+          data,
+          tipo,
+          valor,
+          motivo: String(rm[4] || ''),
+          saldo_acumulado: acumulado
+        };
+      })
+      .filter(r => r.motivo.toLowerCase() !== 'motivo');
+  }
 
   localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
-  return lancamentos;
+
+  return {
+    sucesso: true,
+    lancamentos,
+    rendasExtras,
+    fixas,
+    orcamento,
+    reserva,
+    totalLancamentos: lancamentos.length,
+    totalRendas: rendasExtras.length,
+    totalFixas: fixas.length,
+    mensagem: `Sincronizado: ${lancamentos.length} despesas, ${rendasExtras.length} rendas extras e ${fixas.length} contas fixas.`
+  };
+}
+
+/**
+ * Busca automaticamente a planilha do casal no Google Drive
+ */
+export async function buscarPlanilhaNoDrive(): Promise<PlanilhaConectada | null> {
+  const token = await getAccessToken();
+  if (!token) return null;
+
+  try {
+    const q = encodeURIComponent(
+      "name contains 'Orçamento' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false"
+    );
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,webViewLink)&pageSize=5`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (data.files && data.files.length > 0) {
+      const file = data.files[0];
+      salvarPlanilhaConectada(file.id, file.name);
+      return {
+        id: file.id,
+        nome: file.name,
+        url: file.webViewLink || `https://docs.google.com/spreadsheets/d/${file.id}/edit`,
+        ultimaSincronizacao: new Date().toLocaleTimeString('pt-BR')
+      };
+    }
+  } catch (err) {
+    console.warn('Busca automática no Google Drive:', err);
+  }
+  return null;
+}
+
+/**
+ * Sincroniza e puxa os lançamentos existentes do Google Sheets para o App (compatibilidade)
+ */
+export async function puxarLancamentosDaPlanilha(spreadsheetId: string): Promise<Lancamento[]> {
+  const resultado = await puxarDadosCompletosDaPlanilha(spreadsheetId);
+  return resultado.lancamentos;
 }
 
 /**

@@ -21,6 +21,9 @@ const provider = new GoogleAuthProvider();
 SCOPES.forEach(scope => provider.addScope(scope));
 provider.setCustomParameters({ prompt: 'select_account' });
 
+const STORAGE_TOKEN_KEY = 'orcamento_google_access_token';
+const STORAGE_TOKEN_TIME_KEY = 'orcamento_google_token_timestamp';
+
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 let cachedUser: User | null = null;
@@ -32,14 +35,16 @@ export const initAuth = (
   return onAuthStateChanged(auth, async (user: User | null) => {
     cachedUser = user;
     if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+      const validToken = await getAccessToken();
+      if (validToken) {
+        if (onAuthSuccess) onAuthSuccess(user, validToken);
       } else if (!isSigningIn) {
-        // If we have a Firebase user but no cached token, the user needs to click Sign In to get a fresh token with Workspace scopes
         if (onAuthFailure) onAuthFailure();
       }
     } else {
       cachedAccessToken = null;
+      localStorage.removeItem(STORAGE_TOKEN_KEY);
+      localStorage.removeItem(STORAGE_TOKEN_TIME_KEY);
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -56,6 +61,10 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
     cachedAccessToken = credential.accessToken;
     cachedUser = result.user;
+
+    localStorage.setItem(STORAGE_TOKEN_KEY, credential.accessToken);
+    localStorage.setItem(STORAGE_TOKEN_TIME_KEY, String(Date.now()));
+
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Erro no login Google:', error);
@@ -66,15 +75,31 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
-  return cachedAccessToken;
+  if (cachedAccessToken) return cachedAccessToken;
+
+  const savedToken = localStorage.getItem(STORAGE_TOKEN_KEY);
+  const savedTime = localStorage.getItem(STORAGE_TOKEN_TIME_KEY);
+
+  if (savedToken && savedTime) {
+    const elapsedMinutes = (Date.now() - parseInt(savedTime, 10)) / (1000 * 60);
+    // Tokens duram 60 min no Google; consideramos válido até 55 min
+    if (elapsedMinutes < 55) {
+      cachedAccessToken = savedToken;
+      return savedToken;
+    }
+  }
+
+  return null;
 };
 
 export const getCurrentUser = (): User | null => {
-  return cachedUser;
+  return cachedUser || auth.currentUser;
 };
 
 export const logout = async () => {
   await signOut(auth);
   cachedAccessToken = null;
   cachedUser = null;
+  localStorage.removeItem(STORAGE_TOKEN_KEY);
+  localStorage.removeItem(STORAGE_TOKEN_TIME_KEY);
 };

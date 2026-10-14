@@ -14,6 +14,8 @@ import {
   conectarPlanilhaExistente,
   desconectarPlanilha,
   puxarLancamentosDaPlanilha,
+  puxarDadosCompletosDaPlanilha,
+  buscarPlanilhaNoDrive,
   anexarLancamentoNaPlanilha
 } from '../services/googleSheets';
 import { AppState, salvarEstado } from '../services/storage';
@@ -69,8 +71,15 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
 
   useEffect(() => {
     const unsub = initAuth(
-      (loggedUser) => {
+      async (loggedUser) => {
         setUser(loggedUser);
+        if (!planilha) {
+          const encontrada = await buscarPlanilhaNoDrive();
+          if (encontrada) {
+            setPlanilha(encontrada);
+            setMensagemSucesso(`Planilha "${encontrada.nome}" detectada automaticamente no seu Google Drive!`);
+          }
+        }
       },
       () => {
         setUser(null);
@@ -79,7 +88,7 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
     return () => {
       unsub();
     };
-  }, []);
+  }, [planilha]);
 
   const handleLogin = async () => {
     setCarregando(true);
@@ -89,6 +98,15 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
       if (result) {
         setUser(result.user);
         setMensagemSucesso(`Conectado como ${result.user.displayName || result.user.email}!`);
+        
+        // Auto-busca da planilha caso ainda não conectada
+        if (!planilha) {
+          const encontrada = await buscarPlanilhaNoDrive();
+          if (encontrada) {
+            setPlanilha(encontrada);
+            setMensagemSucesso(`Conectado e planilha "${encontrada.nome}" detectada no Google Drive!`);
+          }
+        }
         setTimeout(() => setMensagemSucesso(null), 4000);
       }
     } catch (err: any) {
@@ -143,36 +161,47 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
     }
   };
 
-  const handlePuxarDaPlanilha = async () => {
+  const executarPuxadaDeDados = async () => {
     if (!planilha) return;
+    setCarregando(true);
+    setMensagemErro(null);
+    try {
+      const resultado = await puxarDadosCompletosDaPlanilha(planilha.id);
+      
+      setAppState(prev => {
+        const atualizado: AppState = {
+          ...prev,
+          lancamentos: resultado.lancamentos.length > 0 ? resultado.lancamentos : prev.lancamentos,
+          rendasExtras: resultado.rendasExtras,
+          fixas: resultado.fixas.length > 0 ? resultado.fixas : prev.fixas,
+          orcamento: resultado.orcamento && resultado.orcamento.length > 0 ? resultado.orcamento : prev.orcamento,
+          reserva: resultado.reserva && resultado.reserva.length > 0 ? resultado.reserva : prev.reserva
+        };
+        salvarEstado(atualizado);
+        return atualizado;
+      });
 
-    setModalConfirmacao({
-      aberto: true,
-      titulo: 'Atualizar Dados do Aplicativo?',
-      mensagem: 'Esta ação irá puxar todos os lançamentos salvos na aba "Lancamentos" da sua planilha do Google Sheets e sincronizar com o seu aplicativo.',
-      acao: async () => {
-        setCarregando(true);
-        setMensagemErro(null);
-        try {
-          const lancamentosPlanilha = await puxarLancamentosDaPlanilha(planilha.id);
-          if (lancamentosPlanilha.length > 0) {
-            setAppState(prev => {
-              const atualizado = { ...prev, lancamentos: lancamentosPlanilha };
-              salvarEstado(atualizado);
-              return atualizado;
-            });
-            setMensagemSucesso(`${lancamentosPlanilha.length} lançamentos sincronizados com sucesso da planilha!`);
-          } else {
-            setMensagemSucesso('Nenhum lançamento novo encontrado na planilha.');
-          }
-        } catch (err: any) {
-          setMensagemErro(err.message || 'Erro ao sincronizar com o Google Sheets.');
-        } finally {
-          setCarregando(false);
-          setModalConfirmacao(null);
-        }
+      setPlanilha(obterPlanilhaConectada());
+      setMensagemSucesso(
+        `🎉 Sincronizado com sucesso! Carregados: ${resultado.totalLancamentos} despesas, ${resultado.totalRendas} rendas extras e ${resultado.totalFixas} contas fixas. Seus dados estão idênticos aos do computador.`
+      );
+    } catch (err: any) {
+      console.error('Erro ao sincronizar:', err);
+      // Se for token expirado, sugerir login
+      if (err.message?.includes('login') || err.message?.includes('autenticar') || err.message?.includes('permissões')) {
+        setMensagemErro('Sessão expirada ou sem permissão. Clique em "Entrar com o Google" para autorizar novamente.');
+      } else {
+        setMensagemErro(err.message || 'Erro ao sincronizar com o Google Sheets.');
       }
-    });
+    } finally {
+      setCarregando(false);
+      setModalConfirmacao(null);
+    }
+  };
+
+  const handlePuxarDaPlanilha = () => {
+    if (!planilha) return;
+    executarPuxadaDeDados();
   };
 
   const handleEnviarTodosParaPlanilha = async () => {
@@ -368,10 +397,14 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
                     type="button"
                     onClick={handlePuxarDaPlanilha}
                     disabled={carregando}
-                    className="flex items-center justify-center gap-1.5 rounded-xl border border-neutral-700 bg-neutral-800/80 hover:bg-neutral-800 px-3 py-2.5 text-xs font-semibold text-white transition-colors active:scale-98"
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-emerald-600/50 bg-emerald-950/40 hover:bg-emerald-900/50 px-3 py-3 text-xs font-bold text-white transition-all active:scale-98 disabled:opacity-50"
                   >
-                    <ArrowDownToLine className="h-4 w-4 text-emerald-400" />
-                    <span>Puxar da Planilha</span>
+                    {carregando ? (
+                      <RefreshCw className="h-4 w-4 text-emerald-400 animate-spin" />
+                    ) : (
+                      <ArrowDownToLine className="h-4 w-4 text-emerald-400" />
+                    )}
+                    <span>{carregando ? 'Puxando da Planilha...' : 'Puxar da Planilha (Atualizar)'}</span>
                   </button>
 
                   <button

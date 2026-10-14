@@ -21,8 +21,10 @@ import {
   obterPlanilhaConectada,
   substituirLancamentosNaPlanilha,
   sincronizarFixasNaPlanilha,
-  anexarRendaExtraNaPlanilha
+  anexarRendaExtraNaPlanilha,
+  puxarDadosCompletosDaPlanilha
 } from '../services/googleSheets';
+import { salvarEstado } from '../services/storage';
 import {
   Check,
   Clock,
@@ -285,6 +287,41 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
     setTimeout(() => setMensagemFeedback(null), 3000);
   };
 
+  const handlePuxarDaPlanilha = async () => {
+    const planilha = obterPlanilhaConectada();
+    if (!planilha) {
+      setMensagemFeedback('Nenhuma planilha conectada ainda. Conecte pelo botão Sheets.');
+      setTimeout(() => setMensagemFeedback(null), 3500);
+      return;
+    }
+
+    setSincronizando(true);
+    setMensagemFeedback('Puxando dados atualizados da sua planilha...');
+    try {
+      const res = await puxarDadosCompletosDaPlanilha(planilha.id);
+      setAppState(prev => {
+        const atualizado: AppState = {
+          ...prev,
+          lancamentos: res.lancamentos.length > 0 ? res.lancamentos : prev.lancamentos,
+          rendasExtras: res.rendasExtras,
+          fixas: res.fixas.length > 0 ? res.fixas : prev.fixas,
+          orcamento: res.orcamento && res.orcamento.length > 0 ? res.orcamento : prev.orcamento,
+          reserva: res.reserva && res.reserva.length > 0 ? res.reserva : prev.reserva
+        };
+        salvarEstado(atualizado);
+        return atualizado;
+      });
+      setMensagemFeedback(
+        `🎉 Sincronizado! ${res.totalLancamentos} despesas, ${res.totalRendas} rendas extras e ${res.totalFixas} contas fixas atualizados.`
+      );
+    } catch (err: any) {
+      setMensagemFeedback(err.message || 'Erro ao sincronizar com a planilha.');
+    } finally {
+      setSincronizando(false);
+      setTimeout(() => setMensagemFeedback(null), 4500);
+    }
+  };
+
   return (
     <div id="painel-do-mes-container" className="flex flex-col gap-4 pb-28 pt-2">
       {/* 1. O NÚMERO QUE IMPORTA: Maior número da tela */}
@@ -339,9 +376,23 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
               Lançamentos do Mês ({appState.lancamentos.length})
             </span>
           </div>
-          <span className="text-xs font-mono font-bold text-white">
-            Total: {formatarMoeda(appState.lancamentos.reduce((acc, l) => acc + l.valor, 0))}
-          </span>
+          <div className="flex items-center gap-2">
+            {obterPlanilhaConectada() && (
+              <button
+                type="button"
+                onClick={handlePuxarDaPlanilha}
+                disabled={sincronizando}
+                className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 text-[11px] font-bold text-emerald-400 transition-all active:scale-95 disabled:opacity-50"
+                title="Puxar dados atualizados do Google Sheets"
+              >
+                <RefreshCw className={`h-3 w-3 ${sincronizando ? 'animate-spin' : ''}`} />
+                <span>{sincronizando ? 'Puxando...' : 'Puxar da Planilha'}</span>
+              </button>
+            )}
+            <span className="text-xs font-mono font-bold text-white">
+              Total: {formatarMoeda(appState.lancamentos.reduce((acc, l) => acc + l.valor, 0))}
+            </span>
+          </div>
         </div>
 
         {/* Banner para limpar lançamentos de exemplo se existirem */}
