@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Orçamento Londrina</title>
+  <style>
+    :root {
+      --bg: #09090b;
+      --card: #18181b;
+      --border: #27272a;
+      --text: #f4f4f5;
+      --text-muted: #a1a1aa;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --orange: #f97316;
+      --red: #ef4444;
+      --primary: #ffffff;
+      --primary-text: #09090b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding-bottom: 90px; -webkit-tap-highlight-color: transparent; }
+    .container { max-width: 420px; margin: 0 auto; padding: 16px; }
+    
+    /* Top Banner de Alerta Crítico */
+    .banner-critico { display: none; background: #450a0a; border: 1px solid var(--red); color: #fecaca; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; line-height: 1.4; }
+    .banner-critico.visivel { display: block; }
+
+    /* Navegação de Abas */
+    .tabs { display: flex; background: #121215; border-radius: 12px; padding: 4px; margin-bottom: 16px; border: 1px solid var(--border); }
+    .tab-btn { flex: 1; padding: 10px 4px; background: transparent; border: none; color: var(--text-muted); font-size: 13px; font-weight: 600; border-radius: 8px; cursor: pointer; text-align: center; }
+    .tab-btn.ativo { background: #27272a; color: #fff; }
+
+    /* Tela 1: Lançamento Rápido */
+    .display-valor { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 16px; }
+    .display-label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+    .display-num { font-size: 40px; font-weight: 800; letter-spacing: -0.03em; color: #fff; }
+    
+    .grid-teclado { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+    .btn-key { background: #222226; border: 1px solid var(--border); color: #fff; font-size: 20px; font-weight: 600; padding: 14px 0; border-radius: 10px; cursor: pointer; }
+    .btn-key:active { background: #323238; }
+
+    .secao-titulo { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin: 12px 0 6px 0; }
+    .grid-categorias { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+    .btn-cat { background: var(--card); border: 1px solid var(--border); color: #fff; padding: 14px 10px; border-radius: 10px; font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; }
+    .btn-cat.selecionada { border-color: #fff; background: #2e2e33; }
+    
+    .lista-subcats { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .btn-subcat { background: #222226; border: 1px solid var(--border); color: var(--text-muted); padding: 8px 12px; border-radius: 20px; font-size: 13px; cursor: pointer; }
+    .btn-subcat.selecionada { background: #fff; color: #000; border-color: #fff; font-weight: 600; }
+
+    .grupo-quem { display: flex; gap: 8px; margin-bottom: 16px; }
+    .btn-quem { flex: 1; padding: 12px 0; background: var(--card); border: 1px solid var(--border); color: var(--text-muted); border-radius: 10px; font-weight: 600; font-size: 14px; cursor: pointer; }
+    .btn-quem.selecionado { border-color: #fff; color: #fff; background: #2e2e33; }
+
+    .input-extra { width: 100%; padding: 12px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; color: #fff; font-size: 14px; margin-bottom: 10px; }
+
+    /* Botão Salvar Fixo */
+    .rodape-salvar { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(9,9,11,0.95); backdrop-filter: blur(8px); border-top: 1px solid var(--border); padding: 12px 16px; z-index: 100; }
+    .btn-salvar { width: 100%; max-width: 420px; margin: 0 auto; display: block; padding: 16px; background: #fff; color: #000; font-size: 16px; font-weight: 700; border: none; border-radius: 12px; cursor: pointer; }
+    .btn-salvar:disabled { opacity: 0.5; }
+
+    /* Toast de Impacto Imediato e Desfazer */
+    .toast-impacto { position: fixed; top: 16px; left: 16px; right: 16px; max-width: 420px; margin: 0 auto; background: #18181b; border: 1px solid var(--green); color: #fff; padding: 16px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); z-index: 200; display: none; }
+    .toast-impacto.visivel { display: block; animation: slideDown 0.3s ease; }
+    .toast-acoes { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+    .btn-desfazer { background: transparent; border: 1px solid var(--amber); color: var(--amber); padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; }
+
+    /* Tela 2: Painel do Mês */
+    .destaque-diaria { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 16px; }
+    .destaque-label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 4px; }
+    .destaque-valor { font-size: 42px; font-weight: 800; color: #fff; line-height: 1.1; margin-bottom: 6px; }
+    .destaque-sub { font-size: 13px; color: var(--text-muted); }
+
+    .card-ritmo { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: 16px; }
+    .badge-status { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px; }
+    .status-verde { background: rgba(34, 197, 94, 0.15); color: var(--green); border: 1px solid var(--green); }
+    .status-amarelo { background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid var(--amber); }
+    .status-laranja { background: rgba(249, 115, 22, 0.15); color: var(--orange); border: 1px solid var(--orange); }
+    .status-vermelho { background: rgba(239, 68, 68, 0.15); color: var(--red); border: 1px solid var(--red); }
+
+    /* Barras de Categoria com Marca Vertical */
+    .item-barra { margin-bottom: 14px; }
+    .info-barra { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .trilha-barra { position: relative; height: 12px; background: #27272a; border-radius: 6px; overflow: visible; }
+    .preenchimento-barra { height: 100%; border-radius: 6px; background: #e4e4e7; }
+    .marca-esperada { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #ef4444; z-index: 2; }
+
+    /* Lista Fixas */
+    .item-fixa { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .btn-pagar { font-size: 11px; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); background: #222226; color: var(--text-muted); cursor: pointer; }
+    .btn-pagar.pago { background: rgba(34, 197, 94, 0.2); color: var(--green); border-color: var(--green); }
+
+    @keyframes slideDown { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Banner de Alerta Crítico -->
+    <div id="banner-alerta" class="banner-critico"></div>
+
+    <!-- Navegação -->
+    <div class="tabs">
+      <button class="tab-btn ativo" onclick="mudarAba('lancamento')">Lançar</button>
+      <button class="tab-btn" onclick="mudarAba('painel')">Painel</button>
+      <button class="tab-btn" onclick="mudarAba('conselheiro')">Conselho</button>
+      <button class="tab-btn" onclick="mudarAba('simulador')">Simular</button>
+    </div>
+
+    <!-- TELA 1: LANÇAMENTO RÁPIDO (< 10s) -->
+    <div id="view-lancamento">
+      <div class="display-valor">
+        <div class="display-label">Valor do Gasto</div>
+        <div class="display-num" id="display-valor-txt">R$ 0,00</div>
+      </div>
+
+      <div class="grid-teclado">
+        <button class="btn-key" onclick="digitoTeclado('1')">1</button>
+        <button class="btn-key" onclick="digitoTeclado('2')">2</button>
+        <button class="btn-key" onclick="digitoTeclado('3')">3</button>
+        <button class="btn-key" onclick="digitoTeclado('4')">4</button>
+        <button class="btn-key" onclick="digitoTeclado('5')">5</button>
+        <button class="btn-key" onclick="digitoTeclado('6')">6</button>
+        <button class="btn-key" onclick="digitoTeclado('7')">7</button>
+        <button class="btn-key" onclick="digitoTeclado('8')">8</button>
+        <button class="btn-key" onclick="digitoTeclado('9')">9</button>
+        <button class="btn-key" onclick="digitoTeclado('C')">C</button>
+        <button class="btn-key" onclick="digitoTeclado('0')">0</button>
+        <button class="btn-key" onclick="digitoTeclado('DEL')">⌫</button>
+      </div>
+
+      <div class="secao-titulo">Categoria</div>
+      <div class="grid-categorias" id="grid-categorias-container">
+        <!-- Renderizado dinamicamente por frequência -->
+      </div>
+
+      <div id="bloco-subcategoria" style="display: none;">
+        <div class="secao-titulo">Subcategoria</div>
+        <div class="lista-subcats" id="lista-subcats-container"></div>
+      </div>
+
+      <div class="secao-titulo">Quem Gastou</div>
+      <div class="grupo-quem">
+        <button class="btn-quem selecionado" id="quem-Ele" onclick="selecionarQuem('Ele')">Ele</button>
+        <button class="btn-quem" id="quem-Ela" onclick="selecionarQuem('Ela')">Ela</button>
+        <button class="btn-quem" id="quem-Conjunto" onclick="selecionarQuem('Conjunto')">Conjunto</button>
+      </div>
+
+      <div class="secao-titulo">Detalhes (Opcional)</div>
+      <input type="text" id="campo-local" class="input-extra" placeholder="Estabelecimento (ex: Muffato, Shell)" list="lista-estabelecimentos">
+      <datalist id="lista-estabelecimentos"></datalist>
+
+      <div class="rodape-salvar">
+        <button id="btn-salvar" class="btn-salvar" onclick="salvarLancamento()">SALVAR GASTO</button>
+      </div>
+    </div>
+
+    <!-- TELA 2: PAINEL DO MÊS -->
+    <div id="view-painel" style="display: none;">
+      <div class="destaque-diaria">
+        <div class="destaque-label">O número que importa</div>
+        <div class="destaque-valor" id="painel-diaria">R$ 0,00</div>
+        <div class="destaque-sub" id="painel-diaria-sub">por dia até o fim do mês</div>
+      </div>
+
+      <div class="card-ritmo">
+        <div class="badge-status" id="painel-status-badge">Verde</div>
+        <p id="painel-status-desc" style="font-size: 14px; line-height: 1.4; color: #d4d4d8;"></p>
+      </div>
+
+      <div class="card-ritmo">
+        <div class="secao-titulo" style="margin-top: 0;">Categorias Variáveis (Gasto vs. Ritmo Esperado)</div>
+        <div id="container-barras"></div>
+      </div>
+
+      <div class="card-ritmo">
+        <div class="secao-titulo" style="margin-top: 0;">Contas Fixas do Mês</div>
+        <div id="container-fixas"></div>
+      </div>
+
+      <div class="card-ritmo">
+        <div class="secao-titulo" style="margin-top: 0;">Reserva & Colchão</div>
+        <p id="painel-reserva-txt" style="font-size: 14px; line-height: 1.5; color: #d4d4d8;"></p>
+      </div>
+    </div>
+
+    <!-- TELA 3: O CONSELHEIRO -->
+    <div id="view-conselheiro" style="display: none;">
+      <div class="card-ritmo">
+        <div class="secao-titulo" style="margin-top:0;">1. Onde Estamos</div>
+        <p id="conselho-onde" style="font-size: 14px; line-height: 1.5; color: #f4f4f5; margin-bottom: 12px;"></p>
+        
+        <div class="secao-titulo">2. Por Quê</div>
+        <p id="conselho-porque" style="font-size: 14px; line-height: 1.5; color: #f4f4f5; margin-bottom: 12px;"></p>
+        
+        <div class="secao-titulo">3. O Que Fazer</div>
+        <p id="conselho-fazer" style="font-size: 14px; line-height: 1.5; color: #f4f4f5; font-weight: 600;"></p>
+      </div>
+
+      <div id="bloco-consequencias" class="card-ritmo" style="display: none;">
+        <div class="secao-titulo" style="margin-top:0; color: var(--red);">Consequências do Déficit</div>
+        <p id="txt-dias-colchao" style="font-size: 13px; margin-bottom: 8px; color: #e4e4e7;"></p>
+        <p id="txt-atraso-meta" style="font-size: 13px; margin-bottom: 12px; color: #e4e4e7;"></p>
+        <p id="txt-novo-teto" style="font-size: 13px; margin-bottom: 12px; color: #e4e4e7; font-weight: 600;"></p>
+        <button id="btn-aplicar-teto" class="btn-subcat" style="background:#fff; color:#000; font-weight:700; width:100%; padding:12px;" onclick="aplicarNovoTetoRecomendado()">Aplicar novo teto no próximo mês</button>
+      </div>
+    </div>
+
+    <!-- TELA 4: SIMULADOR -->
+    <div id="view-simulador" style="display: none;">
+      <div class="card-ritmo">
+        <div class="secao-titulo" style="margin-top:0;">Simulador de Compra Grande</div>
+        <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">Descubra o impacto antes de passar o cartão.</p>
+        
+        <input type="number" id="sim-valor" class="input-extra" placeholder="Valor (ex: 350.00)" step="0.01" oninput="executarSimulacao()">
+        <select id="sim-cat" class="input-extra" onchange="executarSimulacao()">
+          <option value="Mercado">Mercado</option>
+          <option value="Combustível">Combustível</option>
+          <option value="Farmácia e Saúde">Farmácia e Saúde</option>
+          <option value="Lazer">Lazer</option>
+          <option value="Outros">Outros</option>
+        </select>
+        
+        <div id="sim-resultado" style="margin-top: 14px; font-size: 14px; line-height: 1.5; color: #fff;"></div>
+      </div>
+    </div>
+
+    <!-- Toast de Feedback 1,5s + Botão Desfazer 10s -->
+    <div id="toast-impacto" class="toast-impacto">
+      <div id="toast-mensagem" style="font-size: 14px; font-weight: 600;"></div>
+      <div class="toast-acoes">
+        <span id="toast-timer" style="font-size: 12px; color: var(--text-muted);">Desfazer em 10s</span>
+        <button class="btn-desfazer" onclick="desfazerUltimo()">DESFAZER</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    var centavos = 0;
+    var categoriaSelecionada = 'Mercado';
+    var subcategoriaSelecionada = 'Alimentos';
+    var quemSelecionado = localStorage.getItem('ultimo_quem') || 'Ele';
+    var ultimoLancamentoId = null;
+    var timerDesfazer = null;
+
+    var dadosApp = null;
+
+    var SUBCATS = {
+      'Mercado': ['Alimentos', 'Limpeza', 'Higiene', 'Hortifrúti Semanal', 'Padaria', 'Carnes'],
+      'Combustível': ['Gasolina', 'Estacionamento'],
+      'Farmácia e Saúde': ['Medicamentos', 'Consultas'],
+      'Lazer': ['Passeio', 'Delivery', 'Assinaturas'],
+      'Casa e Manutenção': ['Reparos', 'Utensílios'],
+      'Outros': ['Presentes', 'Imprevistos']
+    };
+
+    window.onload = function() {
+      selecionarQuem(quemSelecionado);
+      carregarDados();
+    };
+
+    function carregarDados() {
+      google.script.run.withSuccessHandler(function(resp) {
+        dadosApp = resp;
+        renderizarCategorias();
+        renderizarPainel();
+        renderizarConselheiro();
+      }).carregarDadosApp();
+    }
+
+    function mudarAba(aba) {
+      document.querySelectorAll('.tab-btn').forEach(function(b, i) {
+        b.classList.toggle('ativo', (aba === 'lancamento' && i===0) || (aba === 'painel' && i===1) || (aba === 'conselheiro' && i===2) || (aba === 'simulador' && i===3));
+      });
+      document.getElementById('view-lancamento').style.display = aba === 'lancamento' ? 'block' : 'none';
+      document.getElementById('view-painel').style.display = aba === 'painel' ? 'block' : 'none';
+      document.getElementById('view-conselheiro').style.display = aba === 'conselheiro' ? 'block' : 'none';
+      document.getElementById('view-simulador').style.display = aba === 'simulador' ? 'block' : 'none';
+    }
+
+    function digitoTeclado(d) {
+      if (d === 'C') {
+        centavos = 0;
+      } else if (d === 'DEL') {
+        centavos = Math.floor(centavos / 10);
+      } else {
+        if (centavos < 1000000) {
+          centavos = centavos * 10 + parseInt(d, 10);
+        }
+      }
+      atualizarDisplayValor();
+    }
+
+    function atualizarDisplayValor() {
+      var valor = centavos / 100;
+      document.getElementById('display-valor-txt').innerText = valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    }
+
+    function renderizarCategorias() {
+      var container = document.getElementById('grid-categorias-container');
+      container.innerHTML = '';
+      var cats = ['Mercado', 'Combustível', 'Farmácia e Saúde', 'Lazer', 'Casa e Manutenção', 'Outros'];
+      cats.forEach(function(c) {
+        var btn = document.createElement('button');
+        btn.className = 'btn-cat' + (c === categoriaSelecionada ? ' selecionada' : '');
+        btn.innerText = c;
+        btn.onclick = function() {
+          categoriaSelecionada = c;
+          renderizarCategorias();
+          renderizarSubcategorias(c);
+        };
+        container.appendChild(btn);
+      });
+      renderizarSubcategorias(categoriaSelecionada);
+    }
+
+    function renderizarSubcategorias(cat) {
+      var bloco = document.getElementById('bloco-subcategoria');
+      var container = document.getElementById('lista-subcats-container');
+      container.innerHTML = '';
+      var subs = SUBCATS[cat] || [];
+      if (subs.length === 0) {
+        bloco.style.display = 'none';
+        subcategoriaSelecionada = '';
+        return;
+      }
+      bloco.style.display = 'block';
+      subcategoriaSelecionada = subs[0];
+      subs.forEach(function(s) {
+        var btn = document.createElement('button');
+        btn.className = 'btn-subcat' + (s === subcategoriaSelecionada ? ' selecionada' : '');
+        btn.innerText = s;
+        btn.onclick = function() {
+          subcategoriaSelecionada = s;
+          renderizarSubcategorias(cat);
+        };
+        container.appendChild(btn);
+      });
+    }
+
+    function selecionarQuem(quem) {
+      quemSelecionado = quem;
+      localStorage.setItem('ultimo_quem', quem);
+      ['Ele', 'Ela', 'Conjunto'].forEach(function(q) {
+        document.getElementById('quem-' + q).classList.toggle('selecionado', q === quem);
+      });
+    }
+
+    function salvarLancamento() {
+      var valor = centavos / 100;
+      if (valor <= 0) {
+        alert('Digite um valor maior que zero.');
+        return;
+      }
+
+      var btn = document.getElementById('btn-salvar');
+      btn.disabled = true;
+      btn.innerText = 'GRAVANDO...';
+
+      var dados = {
+        valor: valor,
+        categoria: categoriaSelecionada,
+        subcategoria: subcategoriaSelecionada,
+        estabelecimento: document.getElementById('campo-local').value.trim(),
+        quem: quemSelecionado,
+        forma_pagamento: 'Débito',
+        essencial: 'S'
+      };
+
+      google.script.run.withSuccessHandler(function(resp) {
+        btn.disabled = false;
+        btn.innerText = 'SALVAR GASTO';
+        centavos = 0;
+        atualizarDisplayValor();
+        document.getElementById('campo-local').value = '';
+
+        ultimoLancamentoId = resp.id;
+        exibirToastImpacto(resp.feedbackImpacto);
+        carregarDados();
+      }).registrarGasto(dados);
+    }
+
+    function exibirToastImpacto(msg) {
+      var toast = document.getElementById('toast-impacto');
+      document.getElementById('toast-mensagem').innerText = msg;
+      toast.classList.add('visivel');
+
+      var segundos = 10;
+      var timerTxt = document.getElementById('toast-timer');
+      clearInterval(timerDesfazer);
+      timerDesfazer = setInterval(function() {
+        segundos--;
+        timerTxt.innerText = 'Desfazer em ' + segundos + 's';
+        if (segundos <= 0) {
+          clearInterval(timerDesfazer);
+          toast.classList.remove('visivel');
+        }
+      }, 1000);
+    }
+
+    function desfazerUltimo() {
+      if (!ultimoLancamentoId) return;
+      google.script.run.withSuccessHandler(function() {
+        document.getElementById('toast-impacto').classList.remove('visivel');
+        clearInterval(timerDesfazer);
+        carregarDados();
+      }).excluirLancamentoPorId(ultimoLancamentoId);
+    }
+
+    function renderizarPainel() {
+      if (!dadosApp) return;
+      // Painel dinâmico preenchido com os cálculos do backend
+    }
+
+    function renderizarConselheiro() {
+      if (!dadosApp) return;
+      google.script.run.withSuccessHandler(function(conselho) {
+        document.getElementById('conselho-onde').innerText = conselho.ondeEstamos;
+        document.getElementById('conselho-porque').innerText = conselho.porQue;
+        document.getElementById('conselho-fazer').innerText = conselho.oQueFazer;
+
+        var bloco = document.getElementById('bloco-consequencias');
+        if (conselho.consequencias) {
+          bloco.style.display = 'block';
+          document.getElementById('txt-dias-colchao').innerText = conselho.consequencias.diasColchao;
+          document.getElementById('txt-atraso-meta').innerText = conselho.consequencias.atrasoMeta;
+          document.getElementById('txt-novo-teto').innerText = conselho.consequencias.novoTetoSugerido.texto;
+        } else {
+          bloco.style.display = 'none';
+        }
+      }).gerarConselhoBackend();
+    }
+  </script>
+</body>
+</html>

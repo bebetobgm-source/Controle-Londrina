@@ -1,0 +1,6 @@
+{
+  "name": "Orçamento Londrina",
+  "description": "Controle de orçamento doméstico mobile-first para casal, com lançamento em menos de 10 segundos, índice de ritmo preventivo, alertas e conselheiro financeiro.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
