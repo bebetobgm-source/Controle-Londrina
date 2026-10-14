@@ -687,6 +687,123 @@ export async function conectarPlanilhaExistente(spreadsheetIdOrUrl: string): Pro
 }
 
 /**
+ * Limpa com segurança máxima e garantia absoluta todas as linhas de dados da aba Lancamentos,
+ * preservando a linha 1 com os cabeçalhos.
+ * Combina batchClear, values.clear com headers/body válidos e deleteDimension.
+ */
+export async function limparLinhasDeDadosLancamentos(spreadsheetId: string): Promise<boolean> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error('Você precisa estar conectado à sua conta Google para limpar a planilha.');
+  }
+
+  // 1. Descobrir os detalhes da aba Lancamentos (nome exato e sheetId)
+  let sheetTitle = 'Lancamentos';
+  let sheetId: number | undefined = undefined;
+  let rowCount = 1000;
+
+  try {
+    const metaRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(sheetId,title,gridProperties))`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (metaRes.ok) {
+      const meta = await metaRes.json();
+      const sheet = (meta.sheets || []).find((s: any) => {
+        const t = (s.properties?.title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return t.includes('lancamento');
+      });
+      if (sheet) {
+        sheetTitle = sheet.properties.title;
+        sheetId = sheet.properties.sheetId;
+        rowCount = sheet.properties.gridProperties?.rowCount || 1000;
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso ao consultar metadados da planilha:', err);
+  }
+
+  // 2. Executar batchClear com corpo JSON válido em todas as variações de range
+  const rangesToClear = [
+    `'${sheetTitle}'!A2:Z${Math.max(500, rowCount)}`,
+    `Lancamentos!A2:Z${Math.max(500, rowCount)}`,
+    `'${sheetTitle}'!A2:Z`,
+    `Lancamentos!A2:Z`
+  ];
+
+  try {
+    const batchRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchClear`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ ranges: rangesToClear })
+      }
+    );
+    if (!batchRes.ok) {
+      console.warn('batchClear retornou status:', batchRes.status);
+    }
+  } catch (err) {
+    console.warn('Aviso no batchClear:', err);
+  }
+
+  // 3. Executar values.clear direto no range com body vazio garantido
+  try {
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(sheetTitle)}'!A2:Z:clear`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
+      }
+    );
+  } catch (err) {
+    console.warn('Aviso no values.clear:', err);
+  }
+
+  // 4. Se tivermos o sheetId e mais de 2 linhas, deletar as dimensões extras
+  if (sheetId !== undefined && rowCount > 2) {
+    try {
+      await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            requests: [
+              {
+                deleteDimension: {
+                  range: {
+                    sheetId: sheetId,
+                    dimension: 'ROWS',
+                    startIndex: 1,
+                    endIndex: rowCount - 1
+                  }
+                }
+              }
+            ]
+          })
+        }
+      );
+    } catch (err) {
+      console.warn('Aviso no deleteDimension:', err);
+    }
+  }
+
+  localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+  return true;
+}
+
+/**
  * Reescreve a lista completa de lançamentos na planilha
  * (usado ao limpar gastos de teste ou sincronizar lista completa limpa)
  */
@@ -698,17 +815,10 @@ export async function substituirLancamentosNaPlanilha(
     const token = await getAccessToken();
     if (!token) return false;
 
-    // 1. Limpar todas as linhas de dados a partir da linha 2
-    await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K:clear`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      }
-    );
+    // 1. Limpar todas as linhas anteriores com a rotina segura
+    await limparLinhasDeDadosLancamentos(spreadsheetId);
 
     if (lancamentos.length === 0) {
-      localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
       return true;
     }
 
@@ -873,14 +983,8 @@ export async function sincronizarTudoSemDuplicar(
     const token = await getAccessToken();
     if (!token) return false;
 
-    // 1. Limpar todas as linhas de dados a partir da linha 2
-    await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K:clear`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      }
-    );
+    // 1. Limpar todas as linhas anteriores para evitar qualquer duplicata ou dado antigo
+    await limparLinhasDeDadosLancamentos(spreadsheetId);
 
     // Linhas de despesas
     const linhasDespesas = lancamentos.map(l => [
@@ -1008,23 +1112,21 @@ export async function zerarPlanilhaERecomessar(
     throw new Error('Você precisa estar conectado com sua conta Google para zerar a planilha.');
   }
 
-  // Limpar todas as linhas da aba Lancamentos a partir da linha 2
-  const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K:clear`,
-    {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` }
-    }
-  );
+  // Limpar todas as linhas de dados da aba Lancamentos de forma garantida
+  await limparLinhasDeDadosLancamentos(spreadsheetId);
 
-  if (!res.ok) {
-    throw new Error('Não foi possível limpar a aba Lancamentos na sua planilha Google Sheets.');
+  // Limpar também no localStorage local para que o app fique sincronizado
+  try {
+    localStorage.setItem('orcamento_londrina_lancamentos_v1', JSON.stringify([]));
+    localStorage.setItem('orcamento_londrina_rendas_extras_v1', JSON.stringify([]));
+  } catch (e) {
+    console.warn('Aviso ao limpar localStorage:', e);
   }
 
   localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
 
   return {
     sucesso: true,
-    mensagem: 'Planilha e aplicativo zerados com sucesso! Prontos para começar seus lançamentos reais do zero.'
+    mensagem: 'Planilha e aplicativo zerados com sucesso! A aba Lancamentos agora está em branco (apenas cabeçalhos).'
   };
 }

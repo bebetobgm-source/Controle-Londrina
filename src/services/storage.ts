@@ -208,7 +208,25 @@ export function excluirLancamento(id: string, estadoAtual: AppState): AppState {
 
 export function limparLancamentosDeExemplo(estadoAtual: AppState): AppState {
   const idsExemplo = new Set(['lan-1', 'lan-2', 'lan-3', 'lan-4']);
-  const filtrados = estadoAtual.lancamentos.filter(l => !idsExemplo.has(l.id));
+  const nomesExemplo = [
+    'muffato duque',
+    'posto ipiranga',
+    'feira do produtor',
+    'droga raia',
+    'compra grande do inicio do mes',
+    'antissensibilizante crianca'
+  ];
+
+  const filtrados = estadoAtual.lancamentos.filter(l => {
+    if (idsExemplo.has(l.id)) return false;
+    const est = (l.estabelecimento || '').toLowerCase();
+    const obs = (l.observacao || '').toLowerCase();
+    if (nomesExemplo.some(termo => est.includes(termo) || obs.includes(termo))) {
+      return false;
+    }
+    return true;
+  });
+
   const novoEstado = { ...estadoAtual, lancamentos: filtrados };
   salvarEstado(novoEstado);
   return novoEstado;

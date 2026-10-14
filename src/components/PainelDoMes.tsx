@@ -265,23 +265,57 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
     setTimeout(() => setMensagemFeedback(null), 3000);
   };
 
-  // Identificar se ainda há os 4 lançamentos de demonstração iniciais
+  // Modal genérico de confirmação in-app (evita window.confirm em iframes/mobile)
+  const [modalConfirmacao, setModalConfirmacao] = useState<{
+    aberto: boolean;
+    titulo: string;
+    mensagem: string;
+    textoBotao?: string;
+    variante?: 'perigo' | 'aviso';
+    acao: () => Promise<void>;
+  } | null>(null);
+
+  // Identificar se ainda há os lançamentos de demonstração iniciais
   const idsExemplo = ['lan-1', 'lan-2', 'lan-3', 'lan-4'];
-  const temLancamentosExemplo = appState.lancamentos.some(l => idsExemplo.includes(l.id));
+  const termosExemplo = ['muffato duque', 'posto ipiranga', 'feira do produtor', 'droga raia'];
+  const temLancamentosExemplo = appState.lancamentos.some(
+    l =>
+      idsExemplo.includes(l.id) ||
+      termosExemplo.some(t => (l.estabelecimento || '').toLowerCase().includes(t))
+  );
 
-  const handleRemoverExemplos = async () => {
-    const novoEstado = limparLancamentosDeExemplo(appState);
-    setAppState(novoEstado);
-    setMensagemFeedback('Gastos de teste removidos! Agora o app contém apenas seus gastos reais.');
-
-    const planilha = obterPlanilhaConectada();
-    if (planilha) {
-      setSincronizando(true);
-      await sincronizarTudoSemDuplicar(planilha.id, novoEstado.lancamentos, novoEstado.rendasExtras);
-      setSincronizando(false);
-    }
-
-    setTimeout(() => setMensagemFeedback(null), 4000);
+  const handleRemoverExemplos = () => {
+    setModalConfirmacao({
+      aberto: true,
+      titulo: 'Remover Gastos de Exemplo?',
+      mensagem:
+        'Deseja remover os 4 lançamentos de teste iniciais (Muffato, Posto, Feira, Farmácia) e manter apenas os seus lançamentos reais? A aba Lancamentos na planilha Google Sheets será atualizada de forma limpa, preservando seus gastos reais.',
+      textoBotao: 'Remover Exemplos e Manter Meus Gastos',
+      variante: 'aviso',
+      acao: async () => {
+        setSincronizando(true);
+        setMensagemFeedback('Removendo exemplos da planilha e do app...');
+        try {
+          const novoEstado = limparLancamentosDeExemplo(appState);
+          setAppState(novoEstado);
+          const planilha = obterPlanilhaConectada();
+          if (planilha) {
+            await sincronizarTudoSemDuplicar(
+              planilha.id,
+              novoEstado.lancamentos,
+              novoEstado.rendasExtras
+            );
+          }
+          setMensagemFeedback('✨ Gastos de exemplo removidos! Mantidos apenas seus gastos reais.');
+        } catch (err: any) {
+          setMensagemFeedback(err.message || 'Erro ao atualizar planilha.');
+        } finally {
+          setSincronizando(false);
+          setModalConfirmacao(null);
+          setTimeout(() => setMensagemFeedback(null), 4000);
+        }
+      }
+    });
   };
 
   const handleExcluirLancamento = async (id: string) => {
@@ -338,63 +372,80 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
     }
   };
 
-  const handleLimparDuplicados = async () => {
+  const handleLimparDuplicados = () => {
     const planilha = obterPlanilhaConectada();
     if (!planilha) {
       setMensagemFeedback('Nenhuma planilha conectada ainda.');
       return;
     }
-    setSincronizando(true);
-    setMensagemFeedback('Varrendo e eliminando duplicados na planilha...');
-    try {
-      const res = await limparDuplicadosDaPlanilha(planilha.id);
-      setAppState(prev => {
-        const atualizado: AppState = {
-          ...prev,
-          lancamentos: res.lancamentos,
-          rendasExtras: res.rendasExtras
-        };
-        salvarEstado(atualizado);
-        return atualizado;
-      });
-      setMensagemFeedback(`🧹 ${res.mensagem}`);
-    } catch (err: any) {
-      setMensagemFeedback(err.message || 'Erro ao limpar duplicados.');
-    } finally {
-      setSincronizando(false);
-      setTimeout(() => setMensagemFeedback(null), 5000);
-    }
+    setModalConfirmacao({
+      aberto: true,
+      titulo: '🧹 Eliminar Duplicados da Planilha?',
+      mensagem:
+        'O sistema fará uma varredura na aba Lancamentos da sua planilha Google Sheets, identificando e removendo todas as linhas duplicadas (mesmo ID ou mesma data, valor, categoria e descrição). Apenas uma cópia única será mantida.',
+      textoBotao: 'Eliminar Duplicados Agora',
+      variante: 'aviso',
+      acao: async () => {
+        setSincronizando(true);
+        setMensagemFeedback('Varrendo e eliminando duplicados na planilha...');
+        try {
+          const res = await limparDuplicadosDaPlanilha(planilha.id);
+          setAppState(prev => {
+            const atualizado: AppState = {
+              ...prev,
+              lancamentos: res.lancamentos,
+              rendasExtras: res.rendasExtras
+            };
+            salvarEstado(atualizado);
+            return atualizado;
+          });
+          setMensagemFeedback(`🧹 ${res.mensagem}`);
+        } catch (err: any) {
+          setMensagemFeedback(err.message || 'Erro ao limpar duplicados.');
+        } finally {
+          setSincronizando(false);
+          setModalConfirmacao(null);
+          setTimeout(() => setMensagemFeedback(null), 5000);
+        }
+      }
+    });
   };
 
-  const handleZerarTudo = async () => {
-    const confirmar = window.confirm(
-      '⚠️ Tem certeza que deseja zerar os lançamentos da planilha e do app? Isso apagará os dados de teste para começar do zero com seus gastos reais. Cabeçalhos e configurações serão mantidos.'
-    );
-    if (!confirmar) return;
-
-    setSincronizando(true);
-    setMensagemFeedback('Zerando lançamentos...');
-    try {
-      const planilha = obterPlanilhaConectada();
-      if (planilha) {
-        await zerarPlanilhaERecomessar(planilha.id);
+  const handleZerarTudo = () => {
+    setModalConfirmacao({
+      aberto: true,
+      titulo: '⚠️ Zerar Planilha e Aplicativo?',
+      mensagem:
+        'Atenção: Isso apagará TODOS os lançamentos de despesas e rendas extras da planilha Google Sheets (a aba Lancamentos ficará completamente em branco, apenas com a linha de cabeçalhos) e do aplicativo. Use para começar do zero com seus gastos reais. Suas contas fixas e configurações continuarão salvas.',
+      textoBotao: 'Sim, Zerar Tudo e Começar Limpo',
+      variante: 'perigo',
+      acao: async () => {
+        setSincronizando(true);
+        setMensagemFeedback('Zerando lançamentos na planilha e no app...');
+        try {
+          const planilha = obterPlanilhaConectada();
+          if (planilha) {
+            await zerarPlanilhaERecomessar(planilha.id);
+          }
+          setAppState(prev => {
+            const atualizado: AppState = {
+              ...prev,
+              lancamentos: [],
+              rendasExtras: []
+            };
+            salvarEstado(atualizado);
+            return atualizado;
+          });
+          setMensagemFeedback('🗑️ Planilha e aplicativo zerados com sucesso! Comece seus lançamentos reais.');
+        } catch (err: any) {
+          setMensagemFeedback(err.message || 'Erro ao zerar planilha.');
+        } finally {
+          setSincronizando(false);
+          setModalConfirmacao(null);
+          setTimeout(() => setMensagemFeedback(null), 4500);
+        }
       }
-      setAppState(prev => {
-        const atualizado: AppState = {
-          ...prev,
-          lancamentos: [],
-          rendasExtras: []
-        };
-        salvarEstado(atualizado);
-        return atualizado;
-      });
-      setMensagemFeedback('Planilha e aplicativo zerados com sucesso! Comece seus lançamentos reais.');
-    } catch (err: any) {
-      setMensagemFeedback(err.message || 'Erro ao zerar planilha.');
-    } finally {
-      setSincronizando(false);
-      setTimeout(() => setMensagemFeedback(null), 4500);
-    }
+    });
   };
 
   return (
@@ -1208,6 +1259,52 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmação Seguro (sem window.confirm) */}
+      {modalConfirmacao && modalConfirmacao.aberto && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-neutral-800 bg-neutral-900 p-5 shadow-2xl">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              {modalConfirmacao.variante === 'perigo' ? (
+                <Trash2 className="h-5 w-5 text-rose-400" />
+              ) : (
+                <Sparkles className="h-5 w-5 text-amber-400" />
+              )}
+              <span>{modalConfirmacao.titulo}</span>
+            </h3>
+            <p className="mt-2.5 text-xs text-neutral-300 leading-relaxed">
+              {modalConfirmacao.mensagem}
+            </p>
+            <div className="mt-5 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={sincronizando}
+                onClick={() => setModalConfirmacao(null)}
+                className="rounded-xl border border-neutral-800 bg-neutral-950 px-3.5 py-2 text-xs font-semibold text-neutral-400 hover:text-white transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={sincronizando}
+                onClick={modalConfirmacao.acao}
+                className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition-all disabled:opacity-50 active:scale-95 ${
+                  modalConfirmacao.variante === 'perigo'
+                    ? 'bg-rose-500 hover:bg-rose-400 text-white shadow-lg shadow-rose-500/20'
+                    : 'bg-amber-400 hover:bg-amber-300 text-neutral-950 shadow-lg shadow-amber-400/20'
+                }`}
+              >
+                {sincronizando && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                <span>
+                  {sincronizando
+                    ? 'Processando...'
+                    : modalConfirmacao.textoBotao || 'Confirmar'}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       )}

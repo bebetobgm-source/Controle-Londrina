@@ -21,7 +21,7 @@ import {
   zerarPlanilhaERecomessar,
   sincronizarTudoSemDuplicar
 } from '../services/googleSheets';
-import { AppState, salvarEstado } from '../services/storage';
+import { AppState, salvarEstado, limparLancamentosDeExemplo } from '../services/storage';
 import { formatarMoeda } from '../services/engine';
 import {
   CheckCircle2,
@@ -276,6 +276,40 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
     });
   };
 
+  const handleRemoverExemplos = async () => {
+    if (!planilha) return;
+
+    setModalConfirmacao({
+      aberto: true,
+      titulo: 'Remover Gastos de Demonstração?',
+      mensagem:
+        'Deseja remover da planilha e do app os 4 gastos de exemplo iniciais (Muffato, Posto, Feira, Farmácia = R$ 679,70) e preservar APENAS os seus gastos reais? A planilha será regravada de forma limpa.',
+      acao: async () => {
+        setCarregando(true);
+        setMensagemErro(null);
+        try {
+          const novoEstado = limparLancamentosDeExemplo(appState);
+          setAppState(novoEstado);
+          const ok = await sincronizarTudoSemDuplicar(
+            planilha.id,
+            novoEstado.lancamentos,
+            novoEstado.rendasExtras
+          );
+          if (ok) {
+            setMensagemSucesso('✨ Gastos de exemplo removidos com sucesso! Apenas seus gastos reais foram mantidos.');
+          } else {
+            setMensagemErro('Erro ao sincronizar planilha.');
+          }
+        } catch (err: any) {
+          setMensagemErro(err.message || 'Erro ao remover exemplos.');
+        } finally {
+          setCarregando(false);
+          setModalConfirmacao(null);
+        }
+      }
+    });
+  };
+
   const handleZerarPlanilha = async () => {
     if (!planilha) return;
 
@@ -515,7 +549,18 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={handleRemoverExemplos}
+                      disabled={carregando}
+                      className="flex items-center justify-center gap-1.5 rounded-xl border border-sky-600/40 bg-sky-950/30 hover:bg-sky-900/40 px-3 py-2.5 text-xs font-bold text-sky-200 transition-colors active:scale-98"
+                      title="Remove os 4 gastos de teste iniciais da planilha e mantém apenas seus gastos reais"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-sky-400" />
+                      <span>Limpar Gastos de Teste</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={handleLimparDuplicadosPlanilha}
@@ -532,10 +577,10 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
                       onClick={handleZerarPlanilha}
                       disabled={carregando}
                       className="flex items-center justify-center gap-1.5 rounded-xl border border-rose-900/50 bg-rose-950/20 hover:bg-rose-900/40 px-3 py-2.5 text-xs font-semibold text-rose-300 transition-colors active:scale-98"
-                      title="Apaga os lançamentos de teste para começar do zero com gastos reais"
+                      title="Apaga todos os lançamentos para deixar a planilha em branco (cabeçalhos preservados)"
                     >
                       <Trash2 className="h-3.5 w-3.5 text-rose-400" />
-                      <span>Zerar Planilha (Começar do Zero)</span>
+                      <span>Zerar Planilha (100% em Branco)</span>
                     </button>
                   </div>
                 </div>
