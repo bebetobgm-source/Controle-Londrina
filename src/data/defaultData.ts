@@ -50,8 +50,9 @@ export const CATEGORIAS_PADRAO: CategoriaItem[] = [
   { categoria: 'Farmácia e Saúde', subcategoria: 'Consultas', ativo: 'S' },
 
   // Lazer
-  { categoria: 'Lazer', subcategoria: 'Passeio', ativo: 'S' },
+  { categoria: 'Lazer', subcategoria: 'Lanches e Restaurantes', ativo: 'S' },
   { categoria: 'Lazer', subcategoria: 'Delivery', ativo: 'S' },
+  { categoria: 'Lazer', subcategoria: 'Passeio', ativo: 'S' },
   { categoria: 'Lazer', subcategoria: 'Assinaturas', ativo: 'S' },
 
   // Casa e Manutenção
@@ -96,8 +97,10 @@ export const RESERVA_INICIAL: TransacaoReserva[] = [
 
 // Estabelecimentos comuns para autocomplete rápido
 export const ESTABELECIMENTOS_SUGERIDOS = [
+  'Arnaldo Lanches',
   'Muffato Duque',
   'Musamar Centro',
+  'Viscardi',
   'Angeloni',
   'Posto Ipiranga Higienópolis',
   'Posto Shell Tiradentes',

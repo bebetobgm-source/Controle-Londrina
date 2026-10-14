@@ -231,7 +231,7 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">Categoria (Mais frequentes)</span>
         </div>
-        <div id="grid-categorias-botoes" className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div id="grid-categorias-botoes" className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
           {categoriasOrdenadas.slice(0, 6).map(cat => {
             const isSelected = categoriaSelecionada === cat;
             return (
@@ -240,13 +240,13 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
                 id={`btn-cat-${cat.toLowerCase().replace(/\s+/g, '-')}`}
                 type="button"
                 onClick={() => handleSelecionarCategoria(cat)}
-                className={`rounded-xl border px-3 py-3 text-left transition-all active:scale-95 ${
+                className={`rounded-xl border px-3 py-2.5 text-center flex items-center justify-center transition-all active:scale-95 min-h-[46px] ${
                   isSelected
                     ? 'border-white bg-neutral-800 text-white font-bold ring-1 ring-white/50'
                     : 'border-neutral-800/90 bg-neutral-900/90 text-neutral-300 hover:bg-neutral-800/60'
                 }`}
               >
-                <div className="text-sm font-semibold truncate">{cat}</div>
+                <div className="text-xs sm:text-sm font-semibold leading-tight">{cat}</div>
               </button>
             );
           })}
