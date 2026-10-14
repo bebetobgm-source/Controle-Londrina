@@ -56,8 +56,23 @@ export function carregarEstado(): AppState {
 
     const lancamentos = rawLancamentos ? JSON.parse(rawLancamentos) : [...LANCAMENTOS_INICIAIS];
     const fixas = rawFixas ? JSON.parse(rawFixas) : [...FIXAS_PADRAO];
-    const orcamento = rawOrcamento ? JSON.parse(rawOrcamento) : [...ORCAMENTO_PADRAO];
-    const categorias = rawCategorias ? JSON.parse(rawCategorias) : [...CATEGORIAS_PADRAO];
+    let orcamento = rawOrcamento ? JSON.parse(rawOrcamento) : [...ORCAMENTO_PADRAO];
+    let categorias = rawCategorias ? JSON.parse(rawCategorias) : [...CATEGORIAS_PADRAO];
+
+    // Garantir que Alimentação Fora esteja presente mesmo para quem já abriu o app antes
+    if (!categorias.some((c: any) => c.categoria === 'Alimentação Fora')) {
+      const novas = CATEGORIAS_PADRAO.filter(c => c.categoria === 'Alimentação Fora');
+      categorias = [...novas, ...categorias];
+      localStorage.setItem(STORAGE_KEYS.CATEGORIAS, JSON.stringify(categorias));
+    }
+    if (!orcamento.some((o: any) => o.categoria === 'Alimentação Fora')) {
+      orcamento = [
+        ...orcamento,
+        { mes_ref: 'atual', categoria: 'Alimentação Fora', teto: 250, tipo: 'Variável' }
+      ];
+      localStorage.setItem(STORAGE_KEYS.ORCAMENTO, JSON.stringify(orcamento));
+    }
+
     const reserva = rawReserva ? JSON.parse(rawReserva) : [...RESERVA_INICIAL];
     const config = rawConfig ? JSON.parse(rawConfig) : { ...CONFIG_PADRAO };
     const alertasLog = rawAlertas ? JSON.parse(rawAlertas) : [];
@@ -176,6 +191,20 @@ export function registrarLancamento(
 export function excluirLancamento(id: string, estadoAtual: AppState): AppState {
   const filtrados = estadoAtual.lancamentos.filter(l => l.id !== id);
   const novoEstado = { ...estadoAtual, lancamentos: filtrados };
+  salvarEstado(novoEstado);
+  return novoEstado;
+}
+
+export function limparLancamentosDeExemplo(estadoAtual: AppState): AppState {
+  const idsExemplo = new Set(['lan-1', 'lan-2', 'lan-3', 'lan-4']);
+  const filtrados = estadoAtual.lancamentos.filter(l => !idsExemplo.has(l.id));
+  const novoEstado = { ...estadoAtual, lancamentos: filtrados };
+  salvarEstado(novoEstado);
+  return novoEstado;
+}
+
+export function limparTodosLancamentos(estadoAtual: AppState): AppState {
+  const novoEstado = { ...estadoAtual, lancamentos: [] };
   salvarEstado(novoEstado);
   return novoEstado;
 }

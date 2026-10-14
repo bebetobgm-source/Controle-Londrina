@@ -23,7 +23,17 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
       frequencia[l.categoria] = (frequencia[l.categoria] || 0) + 1;
     });
 
-    const todas = ['Mercado', 'Combustível', 'Farmácia e Saúde', 'Lazer', 'Casa e Manutenção', 'Educação', 'Vestuário', 'Outros'];
+    const todas = [
+      'Mercado',
+      'Alimentação Fora',
+      'Combustível',
+      'Farmácia e Saúde',
+      'Lazer',
+      'Casa e Manutenção',
+      'Educação',
+      'Vestuário',
+      'Outros'
+    ];
     return todas.sort((a, b) => (frequencia[b] || 0) - (frequencia[a] || 0));
   }, [appState.lancamentos]);
 
@@ -229,10 +239,11 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
       {/* Categorias como Botões Grandes Tocáveis ordenados por frequência */}
       <div className="mt-4">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">Categoria (Mais frequentes)</span>
+          <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">Categoria</span>
+          <span className="text-[11px] text-neutral-500">Toque para selecionar</span>
         </div>
-        <div id="grid-categorias-botoes" className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {categoriasOrdenadas.slice(0, 6).map(cat => {
+        <div id="grid-categorias-botoes" className="mt-2 grid grid-cols-3 gap-2">
+          {categoriasOrdenadas.map(cat => {
             const isSelected = categoriaSelecionada === cat;
             return (
               <button
@@ -240,13 +251,13 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
                 id={`btn-cat-${cat.toLowerCase().replace(/\s+/g, '-')}`}
                 type="button"
                 onClick={() => handleSelecionarCategoria(cat)}
-                className={`rounded-xl border px-3 py-2.5 text-center flex items-center justify-center transition-all active:scale-95 min-h-[46px] ${
+                className={`rounded-xl border px-2 py-2 text-center flex items-center justify-center transition-all active:scale-95 min-h-[46px] ${
                   isSelected
-                    ? 'border-white bg-neutral-800 text-white font-bold ring-1 ring-white/50'
+                    ? 'border-white bg-neutral-800 text-white font-bold ring-1 ring-white/50 shadow-md'
                     : 'border-neutral-800/90 bg-neutral-900/90 text-neutral-300 hover:bg-neutral-800/60'
                 }`}
               >
-                <div className="text-xs sm:text-sm font-semibold leading-tight">{cat}</div>
+                <div className="text-[11px] sm:text-xs font-semibold leading-tight text-center">{cat}</div>
               </button>
             );
           })}

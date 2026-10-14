@@ -1,12 +1,22 @@
-import React from 'react';
-import { AppState, alternarStatusContaFixa } from '../services/storage';
+import React, { useState } from 'react';
+import {
+  AppState,
+  alternarStatusContaFixa,
+  excluirLancamento,
+  limparLancamentosDeExemplo
+} from '../services/storage';
 import {
   calcularStatusRitmo,
   calcularRitmoPorCategorias,
   calcularProjecaoFechamento,
-  formatarMoeda
+  formatarMoeda,
+  formatarDataBR
 } from '../services/engine';
-import { Check, Clock, AlertTriangle, ShieldCheck, Wallet } from 'lucide-react';
+import {
+  obterPlanilhaConectada,
+  substituirLancamentosNaPlanilha
+} from '../services/googleSheets';
+import { Check, Clock, AlertTriangle, ShieldCheck, Wallet, Trash2, Sparkles, Receipt, RefreshCw } from 'lucide-react';
 
 interface Props {
   appState: AppState;
@@ -54,6 +64,41 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
     setAppState(novoEstado);
   };
 
+  const [mensagemFeedback, setMensagemFeedback] = useState<string | null>(null);
+  const [sincronizando, setSincronizando] = useState<boolean>(false);
+
+  // Identificar se ainda há os 4 lançamentos de demonstração iniciais
+  const idsExemplo = ['lan-1', 'lan-2', 'lan-3', 'lan-4'];
+  const temLancamentosExemplo = appState.lancamentos.some(l => idsExemplo.includes(l.id));
+
+  const handleRemoverExemplos = async () => {
+    const novoEstado = limparLancamentosDeExemplo(appState);
+    setAppState(novoEstado);
+    setMensagemFeedback('Gastos de teste removidos! Agora o app contém apenas seus gastos reais.');
+
+    const planilha = obterPlanilhaConectada();
+    if (planilha) {
+      setSincronizando(true);
+      await substituirLancamentosNaPlanilha(planilha.id, novoEstado.lancamentos);
+      setSincronizando(false);
+    }
+
+    setTimeout(() => setMensagemFeedback(null), 4000);
+  };
+
+  const handleExcluirLancamento = async (id: string) => {
+    const novoEstado = excluirLancamento(id, appState);
+    setAppState(novoEstado);
+    setMensagemFeedback('Lançamento excluído com sucesso.');
+
+    const planilha = obterPlanilhaConectada();
+    if (planilha) {
+      await substituirLancamentosNaPlanilha(planilha.id, novoEstado.lancamentos);
+    }
+
+    setTimeout(() => setMensagemFeedback(null), 3000);
+  };
+
   return (
     <div id="painel-do-mes-container" className="flex flex-col gap-4 pb-28 pt-2">
       {/* 1. O NÚMERO QUE IMPORTA: Maior número da tela */}
@@ -85,6 +130,121 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
         <p className="mt-2 text-sm font-medium leading-relaxed">
           {statusRitmo.explicacao}
         </p>
+      </div>
+      {/* Feedback de Ação */}
+      {mensagemFeedback && (
+        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-300 flex items-center justify-between animate-in fade-in">
+          <span>{mensagemFeedback}</span>
+          {sincronizando && (
+            <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-normal">
+              <RefreshCw className="h-3 w-3 animate-spin" />
+              Sincronizando Sheets...
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* 2.5 LISTA TRANSPARENTE DE LANÇAMENTOS DO MÊS */}
+      <div id="card-lancamentos-recentes" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 shadow-lg">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Receipt className="h-4 w-4 text-neutral-400" />
+            <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">
+              Lançamentos do Mês ({appState.lancamentos.length})
+            </span>
+          </div>
+          <span className="text-xs font-mono font-bold text-white">
+            Total: {formatarMoeda(appState.lancamentos.reduce((acc, l) => acc + l.valor, 0))}
+          </span>
+        </div>
+
+        {/* Banner para limpar lançamentos de exemplo se existirem */}
+        {temLancamentosExemplo && (
+          <div className="my-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-200">
+            <div className="flex items-start gap-2">
+              <Sparkles className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+              <div className="flex-1">
+                <strong className="block font-bold text-amber-300 mb-1">
+                  Gastos de demonstração detectados
+                </strong>
+                <p className="text-neutral-300 leading-relaxed mb-2.5">
+                  O aplicativo incluiu 4 lançamentos de teste como exemplo inicial (Muffato, Posto, Feira, Farmácia = R$ 679,70).
+                  Deseja removê-los e manter apenas seus gastos reais (como os R$ 75,00 do Arnaldo Lanches)?
+                </p>
+                <button
+                  type="button"
+                  onClick={handleRemoverExemplos}
+                  className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-bold text-neutral-950 transition-all hover:bg-amber-300 active:scale-95 flex items-center gap-1.5 shadow"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  <span>Limpar Gastos de Teste (Manter apenas os meus)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {appState.lancamentos.length === 0 ? (
+          <div className="py-6 text-center text-xs text-neutral-500">
+            Nenhum gasto lançado ainda. Use a aba "Lançar" para registrar suas despesas.
+          </div>
+        ) : (
+          <div className="mt-2 divide-y divide-neutral-800/60 max-h-72 overflow-y-auto pr-1">
+            {appState.lancamentos.map(l => {
+              const isExemplo = idsExemplo.includes(l.id);
+              return (
+                <div
+                  key={l.id}
+                  className="flex items-center justify-between py-2.5 text-xs group hover:bg-neutral-800/30 px-1 rounded-lg transition-colors"
+                >
+                  <div className="flex-1 min-w-0 pr-3">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-semibold text-neutral-200 truncate">
+                        {l.estabelecimento || l.observacao || l.subcategoria}
+                      </span>
+                      {isExemplo && (
+                        <span className="rounded bg-neutral-800 border border-neutral-700 px-1.5 py-0.2 text-[9px] font-medium text-neutral-400">
+                          Exemplo
+                        </span>
+                      )}
+                      <span className="rounded bg-neutral-800 px-1.5 py-0.2 text-[10px] text-neutral-400">
+                        {l.categoria}
+                      </span>
+                      <span className="text-[10px] text-neutral-500">
+                        ({l.quem})
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-neutral-500 flex items-center gap-2 mt-0.5">
+                      <span>{formatarDataBR(l.data)}</span>
+                      <span>•</span>
+                      <span>{l.subcategoria}</span>
+                      {l.forma_pagamento && (
+                        <>
+                          <span>•</span>
+                          <span>{l.forma_pagamento}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-mono font-bold text-sm text-white">
+                      {formatarMoeda(l.valor)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleExcluirLancamento(l.id)}
+                      title="Excluir este lançamento"
+                      className="text-neutral-500 hover:text-rose-400 p-1 rounded hover:bg-neutral-800 transition-colors"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 3. BARRAS POR CATEGORIA VARIÁVEL (com marca vertical do dia) */}

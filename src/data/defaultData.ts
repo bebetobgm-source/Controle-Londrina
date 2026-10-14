@@ -33,6 +33,12 @@ export const FIXAS_PADRAO: ContaFixa[] = [
 ];
 
 export const CATEGORIAS_PADRAO: CategoriaItem[] = [
+  // Alimentação Fora (Lanches, Restaurantes, Delivery)
+  { categoria: 'Alimentação Fora', subcategoria: 'Lanches e Pastel', ativo: 'S' },
+  { categoria: 'Alimentação Fora', subcategoria: 'Restaurante e Almoço', ativo: 'S' },
+  { categoria: 'Alimentação Fora', subcategoria: 'Delivery e iFood', ativo: 'S' },
+  { categoria: 'Alimentação Fora', subcategoria: 'Café e Padaria', ativo: 'S' },
+
   // Mercado
   { categoria: 'Mercado', subcategoria: 'Alimentos', ativo: 'S' },
   { categoria: 'Mercado', subcategoria: 'Limpeza', ativo: 'S' },
@@ -74,6 +80,7 @@ export const CATEGORIAS_PADRAO: CategoriaItem[] = [
 
 export const ORCAMENTO_PADRAO: OrcamentoItem[] = [
   { mes_ref: 'atual', categoria: 'Mercado', teto: 1200, tipo: 'Variável' },
+  { mes_ref: 'atual', categoria: 'Alimentação Fora', teto: 250, tipo: 'Variável' },
   { mes_ref: 'atual', categoria: 'Combustível', teto: 300, tipo: 'Variável' },
   { mes_ref: 'atual', categoria: 'Farmácia e Saúde', teto: 150, tipo: 'Variável' },
   { mes_ref: 'atual', categoria: 'Lazer', teto: 100, tipo: 'Variável' },
@@ -177,5 +184,7 @@ export const HISTORICO_SUBCATEGORIAS_MEDIANA: Record<string, number[]> = {
   'Hortifrúti Semanal': [55.00, 60.00, 50.00, 65.00, 58.00],
   'Gasolina': [150.00, 140.00, 160.00, 150.00, 155.00],
   'Medicamentos': [40.00, 45.00, 50.00, 35.00, 42.00],
-  'Delivery': [60.00, 55.00, 70.00, 65.00, 50.00]
+  'Delivery': [60.00, 55.00, 70.00, 65.00, 50.00],
+  'Lanches e Pastel': [45.00, 50.00, 65.00, 70.00, 75.00],
+  'Restaurante e Almoço': [60.00, 80.00, 75.00, 90.00, 70.00]
 };

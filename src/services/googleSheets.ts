@@ -330,3 +330,71 @@ export async function conectarPlanilhaExistente(spreadsheetIdOrUrl: string): Pro
     ultimaSincronizacao: new Date().toLocaleTimeString('pt-BR')
   };
 }
+
+/**
+ * Reescreve a lista completa de lançamentos na planilha
+ * (usado ao limpar gastos de teste ou sincronizar lista completa limpa)
+ */
+export async function substituirLancamentosNaPlanilha(
+  spreadsheetId: string,
+  lancamentos: Lancamento[]
+): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    if (!token) return false;
+
+    // 1. Limpar todas as linhas de dados a partir da linha 2
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K:clear`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+
+    if (lancamentos.length === 0) {
+      localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+      return true;
+    }
+
+    // 2. Preencher com os lançamentos atuais
+    const linhas = lancamentos.map(l => [
+      l.id,
+      l.data,
+      l.valor,
+      l.categoria,
+      l.subcategoria,
+      l.quem,
+      l.estabelecimento || '',
+      l.forma_pagamento || 'Débito',
+      l.essencial || 'S',
+      l.observacao || '',
+      l.criado_em || new Date().toISOString()
+    ]);
+
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K?valueInputOption=USER_ENTERED`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          range: 'Lancamentos!A2:K',
+          values: linhas
+        })
+      }
+    );
+
+    if (res.ok) {
+      localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('Erro ao substituir lançamentos no Sheets:', err);
+    return false;
+  }
+}
+
