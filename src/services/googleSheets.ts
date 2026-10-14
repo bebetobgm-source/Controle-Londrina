@@ -1,4 +1,4 @@
-import { Lancamento, ContaFixa, OrcamentoItem, TransacaoReserva } from '../types';
+import { Lancamento, RendaExtra, ContaFixa, OrcamentoItem, TransacaoReserva } from '../types';
 import { getAccessToken } from './googleAuth';
 import { FIXAS_PADRAO, ORCAMENTO_PADRAO, CONFIG_PADRAO } from '../data/defaultData';
 
@@ -397,4 +397,113 @@ export async function substituirLancamentosNaPlanilha(
     return false;
   }
 }
+
+/**
+ * Atualiza e sincroniza a aba 'Fixas' completa na planilha
+ */
+export async function sincronizarFixasNaPlanilha(
+  spreadsheetId: string,
+  fixas: ContaFixa[]
+): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    if (!token) return false;
+
+    // 1. Limpar linhas anteriores
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Fixas!A2:F:clear`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+
+    if (fixas.length === 0) return true;
+
+    // 2. Preencher com as fixas atuais
+    const linhas = fixas.map(f => [
+      f.descricao,
+      f.valor,
+      f.dia_vencimento,
+      f.categoria,
+      f.ativo,
+      f.pago_mes_ref || ''
+    ]);
+
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Fixas!A2:F?valueInputOption=USER_ENTERED`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          range: 'Fixas!A2:F',
+          values: linhas
+        })
+      }
+    );
+
+    if (res.ok) {
+      localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('Erro ao sincronizar fixas na planilha:', err);
+    return false;
+  }
+}
+
+/**
+ * Anexa uma Renda Extra na planilha Google Sheets (na aba Lancamentos, com categoria 'Renda Extra')
+ */
+export async function anexarRendaExtraNaPlanilha(
+  spreadsheetId: string,
+  renda: RendaExtra
+): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    if (!token) return false;
+
+    const valores = [
+      [
+        renda.id,
+        renda.data,
+        renda.valor,
+        'Renda Extra',
+        renda.categoria,
+        renda.quem,
+        renda.descricao,
+        renda.forma_recebimento || 'Pix',
+        'S',
+        renda.observacao || 'Entrada extra de renda no orçamento',
+        renda.criado_em || new Date().toISOString()
+      ]
+    ];
+
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A:K:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values: valores })
+      }
+    );
+
+    if (res.ok) {
+      localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('Erro ao anexar renda extra na planilha:', err);
+    return false;
+  }
+}
+
 

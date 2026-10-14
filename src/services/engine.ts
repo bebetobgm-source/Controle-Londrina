@@ -1,5 +1,6 @@
 import {
   Lancamento,
+  RendaExtra,
   ContaFixa,
   OrcamentoItem,
   Configuracao,
@@ -172,7 +173,8 @@ export function avaliarAlertas(
   reservas: TransacaoReserva[],
   diaAtualParam?: number,
   totalDiasParam?: number,
-  novoLancamento?: Lancamento
+  novoLancamento?: Lancamento,
+  rendasExtrasParam?: RendaExtra[]
 ): AlertaLog[] {
   const agora = new Date();
   const diaAtual = diaAtualParam !== undefined ? diaAtualParam : agora.getDate();
@@ -195,6 +197,11 @@ export function avaliarAlertas(
   const statusGeral = calcularStatusRitmo(lancamentos, orcamentos, diaAtual, totalDiasMes);
   const ritmosCat = calcularRitmoPorCategorias(lancamentos, orcamentos, diaAtual, totalDiasMes);
 
+  // Total de rendas extras no mês atual
+  const totalRendasExtras = (rendasExtrasParam || [])
+    .filter(r => r.mes_ref === mesRefAtual)
+    .reduce((acc, r) => acc + r.valor, 0);
+
   // REGRA 5 — FIXAS DESCOBERTAS (Prioridade máxima, avaliada primeiro)
   // Some as fixas ainda não pagas até o fim do mês. Se saldo_disponivel < fixas_a_vencer, dispare alerta crítico
   const fixasAVencer = fixas
@@ -202,7 +209,8 @@ export function avaliarAlertas(
     .reduce((acc, f) => acc + f.valor, 0);
 
   const totalGastoMesGeral = lancamentos.reduce((acc, l) => acc + l.valor, 0);
-  const saldoDisponivel = config.renda_liquida_mensal - totalGastoMesGeral;
+  const rendaEfetiva = config.renda_liquida_mensal + totalRendasExtras;
+  const saldoDisponivel = rendaEfetiva - totalGastoMesGeral;
 
   if (saldoDisponivel < fixasAVencer) {
     const faltam = fixasAVencer - saldoDisponivel;
@@ -394,6 +402,8 @@ export interface ProjecaoDetalhada {
   sobraAjustada: number;
   deficitLinear: number;
   deficitAjustada: number;
+  totalRendasExtras: number;
+  rendaTotal: number;
 }
 
 export function calcularProjecaoFechamento(
@@ -402,7 +412,8 @@ export function calcularProjecaoFechamento(
   fixas: ContaFixa[],
   config: Configuracao,
   diaAtualParam?: number,
-  totalDiasParam?: number
+  totalDiasParam?: number,
+  rendasExtrasParam?: RendaExtra[]
 ): ProjecaoDetalhada {
   const agora = new Date();
   const diaAtual = diaAtualParam !== undefined ? diaAtualParam : agora.getDate();
@@ -433,7 +444,11 @@ export function calcularProjecaoFechamento(
 
   const projecaoAjustada = maiorCompraMercado + fixasTotal + projecaoDifuso;
 
-  const renda = config.renda_liquida_mensal;
+  const totalRendasExtras = (rendasExtrasParam || [])
+    .filter(r => r.mes_ref === mesRefAtual)
+    .reduce((acc, r) => acc + r.valor, 0);
+
+  const renda = config.renda_liquida_mensal + totalRendasExtras;
   const sobraLinear = renda - projecaoLinear;
   const sobraAjustada = renda - projecaoAjustada;
 
@@ -447,7 +462,9 @@ export function calcularProjecaoFechamento(
     sobraLinear,
     sobraAjustada,
     deficitLinear: sobraLinear < 0 ? Math.abs(sobraLinear) : 0,
-    deficitAjustada: sobraAjustada < 0 ? Math.abs(sobraAjustada) : 0
+    deficitAjustada: sobraAjustada < 0 ? Math.abs(sobraAjustada) : 0,
+    totalRendasExtras,
+    rendaTotal: renda
   };
 }
 
@@ -463,7 +480,8 @@ export function gerarConselho(
   config: Configuracao,
   reservas: TransacaoReserva[],
   diaAtualParam?: number,
-  totalDiasParam?: number
+  totalDiasParam?: number,
+  rendasExtrasParam?: RendaExtra[]
 ): Conselho {
   const agora = new Date();
   const diaAtual = diaAtualParam !== undefined ? diaAtualParam : agora.getDate();
@@ -471,7 +489,7 @@ export function gerarConselho(
 
   const status = calcularStatusRitmo(lancamentos, orcamentos, diaAtual, totalDiasMes);
   const ritmosCat = calcularRitmoPorCategorias(lancamentos, orcamentos, diaAtual, totalDiasMes);
-  const projecao = calcularProjecaoFechamento(lancamentos, orcamentos, fixas, config, diaAtual, totalDiasMes);
+  const projecao = calcularProjecaoFechamento(lancamentos, orcamentos, fixas, config, diaAtual, totalDiasMes, rendasExtrasParam);
 
   const saldoColchaoAtual = reservas.length > 0 ? reservas[reservas.length - 1].saldo_acumulado : 2000;
   const despesaFixaDiaria = projecao.fixasTotal / 30;
@@ -556,7 +574,8 @@ export function simularImpactoGasto(
   fixas: ContaFixa[],
   config: Configuracao,
   reservas: TransacaoReserva[],
-  diaAtualParam?: number
+  diaAtualParam?: number,
+  rendasExtrasParam?: RendaExtra[]
 ) {
   const agora = new Date();
   const diaAtual = diaAtualParam !== undefined ? diaAtualParam : agora.getDate();
@@ -579,8 +598,8 @@ export function simularImpactoGasto(
   const statusAntes = calcularStatusRitmo(lancamentosAtuais, orcamentos, diaAtual);
   const statusDepois = calcularStatusRitmo(lancamentosComSimulacao, orcamentos, diaAtual);
 
-  const projecaoAntes = calcularProjecaoFechamento(lancamentosAtuais, orcamentos, fixas, config, diaAtual);
-  const projecaoDepois = calcularProjecaoFechamento(lancamentosComSimulacao, orcamentos, fixas, config, diaAtual);
+  const projecaoAntes = calcularProjecaoFechamento(lancamentosAtuais, orcamentos, fixas, config, diaAtual, undefined, rendasExtrasParam);
+  const projecaoDepois = calcularProjecaoFechamento(lancamentosComSimulacao, orcamentos, fixas, config, diaAtual, undefined, rendasExtrasParam);
 
   const reservaSobrevive = projecaoDepois.sobraAjustada >= config.meta_reserva_mensal;
 

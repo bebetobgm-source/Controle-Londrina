@@ -20,7 +20,8 @@ export const ConselheiroView: React.FC<Props> = ({ appState, setAppState }) => {
     appState.config,
     appState.reserva,
     diaAtual,
-    totalDiasMes
+    totalDiasMes,
+    appState.rendasExtras
   );
 
   const [tetoAplicadoSucesso, setTetoAplicadoSucesso] = useState<string | null>(null);

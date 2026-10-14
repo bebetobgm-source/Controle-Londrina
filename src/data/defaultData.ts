@@ -53,29 +53,58 @@ export const CATEGORIAS_PADRAO: CategoriaItem[] = [
 
   // Farmácia e Saúde
   { categoria: 'Farmácia e Saúde', subcategoria: 'Medicamentos', ativo: 'S' },
-  { categoria: 'Farmácia e Saúde', subcategoria: 'Consultas', ativo: 'S' },
+  { categoria: 'Farmácia e Saúde', subcategoria: 'Consultas e Exames', ativo: 'S' },
+  { categoria: 'Farmácia e Saúde', subcategoria: 'Higiene e Cuidados', ativo: 'S' },
+  { categoria: 'Farmácia e Saúde', subcategoria: 'Academia', ativo: 'S' },
+
+  // Combustível
+  { categoria: 'Combustível', subcategoria: 'Gasolina', ativo: 'S' },
+  { categoria: 'Combustível', subcategoria: 'Etanol', ativo: 'S' },
+  { categoria: 'Combustível', subcategoria: 'Estacionamento', ativo: 'S' },
+  { categoria: 'Combustível', subcategoria: 'Lavagem', ativo: 'S' },
 
   // Lazer
-  { categoria: 'Lazer', subcategoria: 'Lanches e Restaurantes', ativo: 'S' },
-  { categoria: 'Lazer', subcategoria: 'Delivery', ativo: 'S' },
-  { categoria: 'Lazer', subcategoria: 'Passeio', ativo: 'S' },
-  { categoria: 'Lazer', subcategoria: 'Assinaturas', ativo: 'S' },
+  { categoria: 'Lazer', subcategoria: 'Passeio e Cinema', ativo: 'S' },
+  { categoria: 'Lazer', subcategoria: 'Bares e Petiscos', ativo: 'S' },
+  { categoria: 'Lazer', subcategoria: 'Assinaturas e Streaming', ativo: 'S' },
+  { categoria: 'Lazer', subcategoria: 'Viagem', ativo: 'S' },
 
   // Casa e Manutenção
-  { categoria: 'Casa e Manutenção', subcategoria: 'Reparos', ativo: 'S' },
+  { categoria: 'Casa e Manutenção', subcategoria: 'Reparos e Consertos', ativo: 'S' },
   { categoria: 'Casa e Manutenção', subcategoria: 'Utensílios', ativo: 'S' },
+  { categoria: 'Casa e Manutenção', subcategoria: 'Faxina e Diarista', ativo: 'S' },
 
   // Educação
-  { categoria: 'Educação', subcategoria: 'Faculdade', ativo: 'S' },
-  { categoria: 'Educação', subcategoria: 'Material', ativo: 'S' },
+  { categoria: 'Educação', subcategoria: 'Faculdade e Cursos', ativo: 'S' },
+  { categoria: 'Educação', subcategoria: 'Material e Livros', ativo: 'S' },
 
   // Vestuário
-  { categoria: 'Vestuário', subcategoria: 'Adulto', ativo: 'S' },
-  { categoria: 'Vestuário', subcategoria: 'Criança', ativo: 'S' },
+  { categoria: 'Vestuário', subcategoria: 'Roupas', ativo: 'S' },
+  { categoria: 'Vestuário', subcategoria: 'Calçados', ativo: 'S' },
 
   // Outros
+  { categoria: 'Outros', subcategoria: 'Pet Shop e Veterinário', ativo: 'S' },
   { categoria: 'Outros', subcategoria: 'Presentes', ativo: 'S' },
   { categoria: 'Outros', subcategoria: 'Imprevistos', ativo: 'S' }
+];
+
+export const CATEGORIAS_RENDA_EXTRA = [
+  { id: 'musica', nome: 'Música & Eventos', icon: 'Music' },
+  { id: 'freelance', nome: 'Freelance & Serviços', icon: 'Briefcase' },
+  { id: 'vendas', nome: 'Vendas & Desapegos', icon: 'Tag' },
+  { id: 'bonus', nome: 'Bônus & Gratificação', icon: 'Award' },
+  { id: 'rendimentos', nome: 'Rendimentos & Dividendos', icon: 'TrendingUp' },
+  { id: 'outros', nome: 'Outras Rendas Extras', icon: 'Coins' }
+];
+
+export const SUGESTOES_RENDA_EXTRA = [
+  'Toquei em casamento',
+  'Show / Apresentação musical',
+  'Trabalho freelance',
+  'Venda de desapego / usado',
+  'Consultoria / Aula particular',
+  'Bônus / Hora extra',
+  'Reembolso recebido'
 ];
 
 export const ORCAMENTO_PADRAO: OrcamentoItem[] = [

@@ -39,7 +39,9 @@ export default function App() {
       appState.config,
       appState.reserva,
       diaAtual,
-      totalDiasMes
+      totalDiasMes,
+      undefined,
+      appState.rendasExtras
     );
   }, [appState, diaAtual, totalDiasMes]);
 
@@ -98,9 +100,23 @@ export default function App() {
                 </button>
               )}
             </div>
-            <p className="text-[11px] text-neutral-400">
-              Renda líquida {formatarMoeda(appState.config.renda_liquida_mensal)}
-            </p>
+            {(() => {
+              const mesAtualStr = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+              const rendasExtrasMes = (appState.rendasExtras || [])
+                .filter(r => r.mes_ref === mesAtualStr)
+                .reduce((acc, r) => acc + r.valor, 0);
+              const totalRendaMes = appState.config.renda_liquida_mensal + rendasExtrasMes;
+              return (
+                <p className="text-[11px] text-neutral-400">
+                  Renda mês: <strong className="text-neutral-200">{formatarMoeda(totalRendaMes)}</strong>
+                  {rendasExtrasMes > 0 && (
+                    <span className="text-emerald-400 font-bold ml-1">
+                      (+{formatarMoeda(rendasExtrasMes)})
+                    </span>
+                  )}
+                </p>
+              );
+            })()}
           </div>
 
           {/* Seletor rápido de dia para simular o mês */}

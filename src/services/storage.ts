@@ -1,5 +1,6 @@
 import {
   Lancamento,
+  RendaExtra,
   ContaFixa,
   OrcamentoItem,
   CategoriaItem,
@@ -20,6 +21,7 @@ import { avaliarAlertas } from './engine';
 
 const STORAGE_KEYS = {
   LANCAMENTOS: 'orcamento_londrina_lancamentos_v1',
+  RENDAS_EXTRAS: 'orcamento_londrina_rendas_extras_v1',
   FIXAS: 'orcamento_londrina_fixas_v1',
   ORCAMENTO: 'orcamento_londrina_orcamento_v1',
   CATEGORIAS: 'orcamento_londrina_categorias_v1',
@@ -32,6 +34,7 @@ const STORAGE_KEYS = {
 
 export interface AppState {
   lancamentos: Lancamento[];
+  rendasExtras: RendaExtra[];
   fixas: ContaFixa[];
   orcamento: OrcamentoItem[];
   categorias: CategoriaItem[];
@@ -45,6 +48,7 @@ export interface AppState {
 export function carregarEstado(): AppState {
   try {
     const rawLancamentos = localStorage.getItem(STORAGE_KEYS.LANCAMENTOS);
+    const rawRendasExtras = localStorage.getItem(STORAGE_KEYS.RENDAS_EXTRAS);
     const rawFixas = localStorage.getItem(STORAGE_KEYS.FIXAS);
     const rawOrcamento = localStorage.getItem(STORAGE_KEYS.ORCAMENTO);
     const rawCategorias = localStorage.getItem(STORAGE_KEYS.CATEGORIAS);
@@ -55,6 +59,7 @@ export function carregarEstado(): AppState {
     const rawDia = localStorage.getItem(STORAGE_KEYS.SIMULACAO_DIA);
 
     const lancamentos = rawLancamentos ? JSON.parse(rawLancamentos) : [...LANCAMENTOS_INICIAIS];
+    const rendasExtras = rawRendasExtras ? JSON.parse(rawRendasExtras) : [];
     const fixas = rawFixas ? JSON.parse(rawFixas) : [...FIXAS_PADRAO];
     let orcamento = rawOrcamento ? JSON.parse(rawOrcamento) : [...ORCAMENTO_PADRAO];
     let categorias = rawCategorias ? JSON.parse(rawCategorias) : [...CATEGORIAS_PADRAO];
@@ -81,6 +86,7 @@ export function carregarEstado(): AppState {
 
     return {
       lancamentos,
+      rendasExtras,
       fixas,
       orcamento,
       categorias,
@@ -94,6 +100,7 @@ export function carregarEstado(): AppState {
     console.error('Erro ao ler do storage local:', err);
     return {
       lancamentos: [...LANCAMENTOS_INICIAIS],
+      rendasExtras: [],
       fixas: [...FIXAS_PADRAO],
       orcamento: [...ORCAMENTO_PADRAO],
       categorias: [...CATEGORIAS_PADRAO],
@@ -110,6 +117,9 @@ export function salvarEstado(estado: Partial<AppState>) {
   try {
     if (estado.lancamentos !== undefined) {
       localStorage.setItem(STORAGE_KEYS.LANCAMENTOS, JSON.stringify(estado.lancamentos));
+    }
+    if (estado.rendasExtras !== undefined) {
+      localStorage.setItem(STORAGE_KEYS.RENDAS_EXTRAS, JSON.stringify(estado.rendasExtras));
     }
     if (estado.fixas !== undefined) {
       localStorage.setItem(STORAGE_KEYS.FIXAS, JSON.stringify(estado.fixas));
@@ -171,7 +181,8 @@ export function registrarLancamento(
     estadoAtual.reserva,
     diaAvaliacao,
     undefined,
-    lancamentoCompleto
+    lancamentoCompleto,
+    estadoAtual.rendasExtras
   );
 
   // Aba Alertas_Log: Nunca sobrescreva, sempre acrescente
@@ -226,6 +237,81 @@ export function alternarStatusContaFixa(descricao: string, estadoAtual: AppState
   return novoEstado;
 }
 
+export function atualizarContaFixa(
+  descricaoOriginal: string,
+  dadosAtualizados: Partial<ContaFixa>,
+  estadoAtual: AppState
+): AppState {
+  const novasFixas = estadoAtual.fixas.map(f => {
+    if (f.descricao === descricaoOriginal) {
+      return { ...f, ...dadosAtualizados };
+    }
+    return f;
+  });
+  const novoEstado = { ...estadoAtual, fixas: novasFixas };
+  salvarEstado(novoEstado);
+  return novoEstado;
+}
+
+export function adicionarContaFixa(
+  novaConta: ContaFixa,
+  estadoAtual: AppState
+): AppState {
+  const filtradas = estadoAtual.fixas.filter(f => f.descricao.toLowerCase() !== novaConta.descricao.toLowerCase());
+  const novasFixas = [...filtradas, novaConta];
+  const novoEstado = { ...estadoAtual, fixas: novasFixas };
+  salvarEstado(novoEstado);
+  return novoEstado;
+}
+
+export function excluirContaFixa(
+  descricao: string,
+  estadoAtual: AppState
+): AppState {
+  const novasFixas = estadoAtual.fixas.filter(f => f.descricao !== descricao);
+  const novoEstado = { ...estadoAtual, fixas: novasFixas };
+  salvarEstado(novoEstado);
+  return novoEstado;
+}
+
+export function registrarRendaExtra(
+  dados: Omit<RendaExtra, 'id' | 'mes_ref' | 'criado_em'>,
+  estadoAtual: AppState
+): { estadoAtualizado: AppState; novoId: string } {
+  const agora = new Date();
+  const mesRefAtual = dados.data
+    ? dados.data.substring(0, 7)
+    : `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+
+  const novoId = `rec-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+  const novaRenda: RendaExtra = {
+    ...dados,
+    id: novoId,
+    mes_ref: mesRefAtual,
+    criado_em: agora.toISOString()
+  };
+
+  const novasRendas = [novaRenda, ...(estadoAtual.rendasExtras || [])];
+  const novoEstado = {
+    ...estadoAtual,
+    rendasExtras: novasRendas,
+    ultimoQuem: dados.quem
+  };
+
+  salvarEstado(novoEstado);
+  return { estadoAtualizado: novoEstado, novoId };
+}
+
+export function excluirRendaExtra(
+  id: string,
+  estadoAtual: AppState
+): AppState {
+  const filtradas = (estadoAtual.rendasExtras || []).filter(r => r.id !== id);
+  const novoEstado = { ...estadoAtual, rendasExtras: filtradas };
+  salvarEstado(novoEstado);
+  return novoEstado;
+}
+
 export function atualizarTetoOrcamento(categoria: string, novoTeto: number, estadoAtual: AppState): AppState {
   const novoOrcamento = estadoAtual.orcamento.map(item => {
     if (item.categoria === categoria) {
@@ -242,6 +328,7 @@ export function atualizarTetoOrcamento(categoria: string, novoTeto: number, esta
 export function resetarParaDadosPadrao(): AppState {
   const estado: AppState = {
     lancamentos: [...LANCAMENTOS_INICIAIS],
+    rendasExtras: [],
     fixas: [...FIXAS_PADRAO],
     orcamento: [...ORCAMENTO_PADRAO],
     categorias: [...CATEGORIAS_PADRAO],

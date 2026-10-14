@@ -24,7 +24,8 @@ export const SimuladorView: React.FC<Props> = ({ appState }) => {
     appState.fixas,
     appState.config,
     appState.reserva,
-    diaAtual
+    diaAtual,
+    appState.rendasExtras
   );
 
   return (

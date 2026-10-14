@@ -20,6 +20,19 @@ export interface Lancamento {
   criado_em: string; // ISO timestamp
 }
 
+export interface RendaExtra {
+  id: string;
+  data: string; // AAAA-MM-DD
+  valor: number;
+  descricao: string; // ex: 'Toquei em casamento', 'Freelance'
+  categoria: string; // 'Música & Eventos', 'Freelance & Serviços', 'Vendas & Desapegos', 'Bônus / Extra', 'Rendimentos', 'Outras Rendas'
+  quem: Quem;
+  forma_recebimento?: string;
+  observacao?: string;
+  mes_ref: string; // AAAA-MM
+  criado_em: string;
+}
+
 export interface ContaFixa {
   descricao: string;
   valor: number;

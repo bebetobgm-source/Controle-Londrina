@@ -3,7 +3,12 @@ import {
   AppState,
   alternarStatusContaFixa,
   excluirLancamento,
-  limparLancamentosDeExemplo
+  limparLancamentosDeExemplo,
+  atualizarContaFixa,
+  adicionarContaFixa,
+  excluirContaFixa,
+  registrarRendaExtra,
+  excluirRendaExtra
 } from '../services/storage';
 import {
   calcularStatusRitmo,
@@ -14,9 +19,28 @@ import {
 } from '../services/engine';
 import {
   obterPlanilhaConectada,
-  substituirLancamentosNaPlanilha
+  substituirLancamentosNaPlanilha,
+  sincronizarFixasNaPlanilha,
+  anexarRendaExtraNaPlanilha
 } from '../services/googleSheets';
-import { Check, Clock, AlertTriangle, ShieldCheck, Wallet, Trash2, Sparkles, Receipt, RefreshCw } from 'lucide-react';
+import {
+  Check,
+  Clock,
+  AlertTriangle,
+  ShieldCheck,
+  Wallet,
+  Trash2,
+  Sparkles,
+  Receipt,
+  RefreshCw,
+  Pencil,
+  Plus,
+  Coins,
+  Music,
+  X
+} from 'lucide-react';
+import { ContaFixa, RendaExtra, Quem } from '../types';
+import { CATEGORIAS_RENDA_EXTRA, SUGESTOES_RENDA_EXTRA } from '../data/defaultData';
 
 interface Props {
   appState: AppState;
@@ -32,7 +56,15 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
 
   const statusRitmo = calcularStatusRitmo(appState.lancamentos, appState.orcamento, diaAtual, totalDiasMes);
   const categoriasRitmo = calcularRitmoPorCategorias(appState.lancamentos, appState.orcamento, diaAtual, totalDiasMes);
-  const projecao = calcularProjecaoFechamento(appState.lancamentos, appState.orcamento, appState.fixas, appState.config, diaAtual, totalDiasMes);
+  const projecao = calcularProjecaoFechamento(
+    appState.lancamentos,
+    appState.orcamento,
+    appState.fixas,
+    appState.config,
+    diaAtual,
+    totalDiasMes,
+    appState.rendasExtras
+  );
 
   // Reserva acumulada e aporte no mês
   const aportesMes = appState.reserva
@@ -51,6 +83,10 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
   const totalFixasPagas = fixasPagas.reduce((acc, f) => acc + f.valor, 0);
   const totalFixasAVencer = fixasAVencer.reduce((acc, f) => acc + f.valor, 0);
 
+  // Rendas Extras no mês
+  const rendasExtrasMes = (appState.rendasExtras || []).filter(r => r.mes_ref === mesRefAtual);
+  const totalRendasExtrasMes = rendasExtrasMes.reduce((acc, r) => acc + r.valor, 0);
+
   // Cores semafóricas estritas
   const badgeStyle = {
     'verde': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40',
@@ -59,13 +95,163 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
     'vermelho': 'bg-rose-500/15 text-rose-400 border-rose-500/40'
   }[statusRitmo.cor];
 
+  const [mensagemFeedback, setMensagemFeedback] = useState<string | null>(null);
+  const [sincronizando, setSincronizando] = useState<boolean>(false);
+
+  // Estados para Edição de Fixas
+  const [contaFixaEmEdicao, setContaFixaEmEdicao] = useState<ContaFixa | null>(null);
+  const [formFixaDescricao, setFormFixaDescricao] = useState('');
+  const [formFixaValor, setFormFixaValor] = useState('');
+  const [formFixaDia, setFormFixaDia] = useState('');
+  const [modalNovaFixa, setModalNovaFixa] = useState(false);
+
+  // Estados para Lançamento de Renda Extra
+  const [modalRendaExtraAberta, setModalRendaExtraAberta] = useState(false);
+  const [rendaValor, setRendaValor] = useState('');
+  const [rendaDescricao, setRendaDescricao] = useState('');
+  const [rendaQuem, setRendaQuem] = useState<Quem>(appState.ultimoQuem || 'Ele');
+  const [rendaCategoria, setRendaCategoria] = useState(CATEGORIAS_RENDA_EXTRA[0].nome);
+  const [rendaFormaRecebimento, setRendaFormaRecebimento] = useState('Pix');
+
   const handleToggleFixa = (descricao: string) => {
     const novoEstado = alternarStatusContaFixa(descricao, appState);
     setAppState(novoEstado);
   };
 
-  const [mensagemFeedback, setMensagemFeedback] = useState<string | null>(null);
-  const [sincronizando, setSincronizando] = useState<boolean>(false);
+  const handleAbrirEdicaoFixa = (f: ContaFixa) => {
+    setContaFixaEmEdicao(f);
+    setFormFixaDescricao(f.descricao);
+    setFormFixaValor(String(f.valor));
+    setFormFixaDia(String(f.dia_vencimento));
+  };
+
+  const handleSalvarEdicaoFixa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!contaFixaEmEdicao) return;
+    const valorNum = parseFloat(formFixaValor.replace(',', '.'));
+    const diaNum = parseInt(formFixaDia, 10);
+    if (isNaN(valorNum) || valorNum < 0 || isNaN(diaNum) || diaNum < 1 || diaNum > 31) {
+      alert('Por favor insira um valor e dia de vencimento válidos (1 a 31).');
+      return;
+    }
+
+    const novoEstado = atualizarContaFixa(
+      contaFixaEmEdicao.descricao,
+      {
+        descricao: formFixaDescricao.trim() || contaFixaEmEdicao.descricao,
+        valor: valorNum,
+        dia_vencimento: diaNum
+      },
+      appState
+    );
+    setAppState(novoEstado);
+    setContaFixaEmEdicao(null);
+    setMensagemFeedback(`Conta fixa '${formFixaDescricao}' atualizada para ${formatarMoeda(valorNum)}!`);
+
+    const planilha = obterPlanilhaConectada();
+    if (planilha) {
+      setSincronizando(true);
+      await sincronizarFixasNaPlanilha(planilha.id, novoEstado.fixas);
+      setSincronizando(false);
+    }
+    setTimeout(() => setMensagemFeedback(null), 3500);
+  };
+
+  const handleExcluirFixa = async (descricao: string) => {
+    if (!confirm(`Deseja remover a conta fixa '${descricao}' do seu orçamento?`)) return;
+    const novoEstado = excluirContaFixa(descricao, appState);
+    setAppState(novoEstado);
+    setContaFixaEmEdicao(null);
+    setMensagemFeedback(`Conta fixa '${descricao}' removida com sucesso.`);
+
+    const planilha = obterPlanilhaConectada();
+    if (planilha) {
+      setSincronizando(true);
+      await sincronizarFixasNaPlanilha(planilha.id, novoEstado.fixas);
+      setSincronizando(false);
+    }
+    setTimeout(() => setMensagemFeedback(null), 3500);
+  };
+
+  const handleCriarNovaFixa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const valorNum = parseFloat(formFixaValor.replace(',', '.'));
+    const diaNum = parseInt(formFixaDia, 10);
+    if (!formFixaDescricao.trim() || isNaN(valorNum) || valorNum <= 0 || isNaN(diaNum) || diaNum < 1 || diaNum > 31) {
+      alert('Preencha descrição, valor e dia válidos.');
+      return;
+    }
+
+    const nova: ContaFixa = {
+      descricao: formFixaDescricao.trim(),
+      valor: valorNum,
+      dia_vencimento: diaNum,
+      categoria: 'Casa e Manutenção',
+      ativo: 'S',
+      pago_mes_ref: ''
+    };
+
+    const novoEstado = adicionarContaFixa(nova, appState);
+    setAppState(novoEstado);
+    setModalNovaFixa(false);
+    setFormFixaDescricao('');
+    setFormFixaValor('');
+    setFormFixaDia('');
+    setMensagemFeedback(`Nova conta fixa '${nova.descricao}' adicionada com sucesso!`);
+
+    const planilha = obterPlanilhaConectada();
+    if (planilha) {
+      setSincronizando(true);
+      await sincronizarFixasNaPlanilha(planilha.id, novoEstado.fixas);
+      setSincronizando(false);
+    }
+    setTimeout(() => setMensagemFeedback(null), 3500);
+  };
+
+  const handleSalvarRendaExtra = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const valorNum = parseFloat(rendaValor.replace(',', '.'));
+    if (isNaN(valorNum) || valorNum <= 0) {
+      alert('Por favor insira um valor válido para a renda extra.');
+      return;
+    }
+
+    const { estadoAtualizado, novoId } = registrarRendaExtra(
+      {
+        data: agora.toISOString().split('T')[0],
+        valor: valorNum,
+        descricao: rendaDescricao.trim() || 'Renda Extra',
+        categoria: rendaCategoria,
+        quem: rendaQuem,
+        forma_recebimento: rendaFormaRecebimento
+      },
+      appState
+    );
+
+    setAppState(estadoAtualizado);
+    setModalRendaExtraAberta(false);
+    setRendaValor('');
+    setRendaDescricao('');
+    setMensagemFeedback(`🎉 Renda extra de ${formatarMoeda(valorNum)} somada ao orçamento do mês!`);
+
+    const planilha = obterPlanilhaConectada();
+    if (planilha) {
+      const rendaCriada = estadoAtualizado.rendasExtras.find(r => r.id === novoId);
+      if (rendaCriada) {
+        setSincronizando(true);
+        await anexarRendaExtraNaPlanilha(planilha.id, rendaCriada);
+        setSincronizando(false);
+      }
+    }
+    setTimeout(() => setMensagemFeedback(null), 4000);
+  };
+
+  const handleExcluirRendaExtra = async (id: string) => {
+    const novoEstado = excluirRendaExtra(id, appState);
+    setAppState(novoEstado);
+    setMensagemFeedback('Renda extra removida.');
+    setTimeout(() => setMensagemFeedback(null), 3000);
+  };
 
   // Identificar se ainda há os 4 lançamentos de demonstração iniciais
   const idsExemplo = ['lan-1', 'lan-2', 'lan-3', 'lan-4'];
@@ -308,15 +494,114 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
         </div>
       </div>
 
-      {/* 4. FIXAS DO MÊS: pagas, a vencer, vencidas */}
+      {/* 4. RENDAS EXTRAS DO MÊS (+ entradas extras que somam ao orçamento) */}
+      <div id="card-rendas-extras-mes" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 shadow-lg">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">
+              Rendas Extras do Mês
+            </span>
+            {totalRendasExtrasMes > 0 && (
+              <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[11px] font-extrabold text-emerald-400 font-mono">
+                +{formatarMoeda(totalRendasExtrasMes)}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setRendaValor('');
+              setRendaDescricao('');
+              setModalRendaExtraAberta(true);
+            }}
+            className="flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 text-xs font-bold text-emerald-400 transition-colors active:scale-95"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span>+ Lançar Renda Extra</span>
+          </button>
+        </div>
+
+        <p className="text-xs text-neutral-400 mb-3">
+          Entradas extras que não estavam programadas (música, casamento, freelas, vendas) somam diretamente ao orçamento familiar deste mês.
+        </p>
+
+        {rendasExtrasMes.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-neutral-800 p-4 text-center">
+            <Coins className="mx-auto h-6 w-6 text-neutral-600 mb-1" />
+            <p className="text-xs text-neutral-300 font-medium">
+              Nenhuma renda extra registrada neste mês.
+            </p>
+            <p className="text-[11px] text-neutral-500 mt-0.5">
+              Tocou em um casamento ou fez um serviço extra? Clique em "+ Lançar Renda Extra" para somar ao orçamento!
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-neutral-800/70">
+            {rendasExtrasMes.map(r => (
+              <div key={r.id} className="flex items-center justify-between py-2.5 text-xs hover:bg-neutral-800/30 px-1 rounded-lg">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-neutral-100">{r.descricao}</span>
+                    <span className="rounded bg-emerald-950/60 border border-emerald-800/60 px-1.5 py-0.2 text-[10px] text-emerald-400 font-medium">
+                      {r.categoria}
+                    </span>
+                    <span className="text-[10px] text-neutral-500">({r.quem})</span>
+                  </div>
+                  <div className="text-[11px] text-neutral-500 flex items-center gap-2 mt-0.5">
+                    <span>{formatarDataBR(r.data)}</span>
+                    {r.forma_recebimento && (
+                      <>
+                        <span>•</span>
+                        <span>{r.forma_recebimento}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="font-mono font-bold text-sm text-emerald-400">
+                    +{formatarMoeda(r.valor)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleExcluirRendaExtra(r.id)}
+                    className="p-1 text-neutral-500 hover:text-rose-400 transition-colors"
+                    title="Remover esta renda extra"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 5. FIXAS DO MÊS: pagas, a vencer, vencidas com EDIÇÃO DIRETA */}
       <div id="card-fixas-mes" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 shadow-lg">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">
-            Fixas do Mês ({formatarMoeda(projecao.fixasTotal)})
-          </span>
-          <span className="text-xs text-neutral-400">
-            Pagas: <strong className="text-emerald-400">{formatarMoeda(totalFixasPagas)}</strong> | A vencer: <strong className="text-amber-400">{formatarMoeda(totalFixasAVencer)}</strong>
-          </span>
+          <div>
+            <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">
+              Fixas do Mês ({formatarMoeda(projecao.fixasTotal)})
+            </span>
+            <div className="text-[11px] text-neutral-400 mt-0.5">
+              Pagas: <strong className="text-emerald-400">{formatarMoeda(totalFixasPagas)}</strong> | A vencer: <strong className="text-amber-400">{formatarMoeda(totalFixasAVencer)}</strong>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setFormFixaDescricao('');
+              setFormFixaValor('');
+              setFormFixaDia('10');
+              setModalNovaFixa(true);
+            }}
+            className="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-800/80 hover:bg-neutral-700 px-2.5 py-1 text-xs font-semibold text-neutral-200 transition-colors active:scale-95"
+            title="Adicionar nova conta fixa"
+          >
+            <Plus className="h-3.5 w-3.5 text-emerald-400" />
+            <span>Nova Fixa</span>
+          </button>
         </div>
 
         <div className="divide-y divide-neutral-800/70">
@@ -328,7 +613,7 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
               <div
                 key={f.descricao}
                 id={`fixa-item-${f.descricao.toLowerCase().replace(/\s+/g, '-')}`}
-                className="flex items-center justify-between py-2.5 text-xs"
+                className="flex items-center justify-between py-2.5 text-xs group hover:bg-neutral-800/20 px-1 rounded-lg"
               >
                 <div>
                   <div className="flex items-center gap-1.5">
@@ -344,8 +629,16 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
                   <span className="text-[11px] text-neutral-500">Vencimento dia {f.dia_vencimento}</span>
                 </div>
 
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2">
                   <span className="font-mono font-medium text-neutral-200">{formatarMoeda(f.valor)}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleAbrirEdicaoFixa(f)}
+                    className="p-1 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                    title={`Editar valor ou vencimento de ${f.descricao}`}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleToggleFixa(f.descricao)}
@@ -365,7 +658,7 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
         </div>
       </div>
 
-      {/* 5. PROJEÇÃO DE FECHAMENTO (Linear vs Ajustada) */}
+      {/* 6. PROJEÇÃO DE FECHAMENTO (Linear vs Ajustada) */}
       <div id="card-projecao-fechamento" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 shadow-lg">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">
@@ -391,6 +684,15 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
           <div className="mt-1 text-xs text-neutral-400">
             Separa compras iniciais ({formatarMoeda(projecao.compraGrandeMercado)}) e fixas ({formatarMoeda(projecao.fixasTotal)}), projetando apenas o gasto diário difuso.
           </div>
+
+          {/* Composição da Renda se houver Renda Extra */}
+          {totalRendasExtrasMes > 0 && (
+            <div className="mt-2 flex items-center justify-between text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 rounded-lg px-2.5 py-1">
+              <span>Renda base {formatarMoeda(appState.config.renda_liquida_mensal)} + Extra {formatarMoeda(totalRendasExtrasMes)}</span>
+              <strong className="font-mono font-bold">= {formatarMoeda(projecao.rendaTotal)}</strong>
+            </div>
+          )}
+
           <div className="mt-2.5 flex items-center justify-between border-t border-neutral-800/80 pt-2 text-xs">
             <span>Resultado previsto:</span>
             {projecao.sobraAjustada >= 0 ? (
@@ -408,7 +710,7 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
         </div>
       </div>
 
-      {/* 6. RESERVA: Meta mensal e Saldo do Colchão */}
+      {/* 7. RESERVA: Meta mensal e Saldo do Colchão */}
       <div id="card-reserva-colchao" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 shadow-lg">
         <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">Reserva & Colchão</span>
         <div className="mt-3 grid grid-cols-2 gap-3">
@@ -425,6 +727,332 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
           </div>
         </div>
       </div>
+
+      {/* MODAL: EDITAR CONTA FIXA */}
+      {contaFixaEmEdicao && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="w-full max-w-sm rounded-2xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
+              <div className="flex items-center gap-2">
+                <Pencil className="h-4 w-4 text-emerald-400" />
+                <h3 className="text-sm font-bold text-white">Editar Conta Fixa</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setContaFixaEmEdicao(null)}
+                className="text-neutral-400 hover:text-white p-1"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSalvarEdicaoFixa} className="mt-4 space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                  Nome da Conta
+                </label>
+                <input
+                  type="text"
+                  value={formFixaDescricao}
+                  onChange={e => setFormFixaDescricao(e.target.value)}
+                  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                    Valor (R$)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={formFixaValor}
+                    onChange={e => setFormFixaValor(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm font-mono text-white focus:border-emerald-500 focus:outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                    Dia Vencimento
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={formFixaDia}
+                    onChange={e => setFormFixaDia(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm font-mono text-white focus:border-emerald-500 focus:outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <p className="text-[11px] text-neutral-400 mt-1">
+                Ao alterar o valor, o total de fixas, projeção de fechamento e a planilha serão sincronizados.
+              </p>
+
+              <div className="pt-3 flex items-center justify-between gap-2 border-t border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => handleExcluirFixa(contaFixaEmEdicao.descricao)}
+                  className="px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-colors"
+                >
+                  Excluir
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setContaFixaEmEdicao(null)}
+                    className="px-3 py-2 text-xs font-semibold text-neutral-400 hover:text-white rounded-xl"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors shadow-lg shadow-emerald-900/40"
+                  >
+                    Salvar
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: NOVA CONTA FIXA */}
+      {modalNovaFixa && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="w-full max-w-sm rounded-2xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
+              <div className="flex items-center gap-2">
+                <Plus className="h-4 w-4 text-emerald-400" />
+                <h3 className="text-sm font-bold text-white">Nova Conta Fixa</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalNovaFixa(false)}
+                className="text-neutral-400 hover:text-white p-1"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCriarNovaFixa} className="mt-4 space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                  Descrição (ex: Seguro, Academia, Streaming)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Nome da conta fixa"
+                  value={formFixaDescricao}
+                  onChange={e => setFormFixaDescricao(e.target.value)}
+                  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                    Valor (R$)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0,00"
+                    value={formFixaValor}
+                    onChange={e => setFormFixaValor(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm font-mono text-white focus:border-emerald-500 focus:outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                    Dia Vencimento
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    placeholder="10"
+                    value={formFixaDia}
+                    onChange={e => setFormFixaDia(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm font-mono text-white focus:border-emerald-500 focus:outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => setModalNovaFixa(false)}
+                  className="px-3 py-2 text-xs font-semibold text-neutral-400 hover:text-white rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors shadow-lg shadow-emerald-900/40"
+                >
+                  Adicionar Conta
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: LANÇAR RENDA EXTRA */}
+      {modalRendaExtraAberta && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="w-full max-w-sm rounded-2xl border border-emerald-500/40 bg-neutral-900 p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
+              <div className="flex items-center gap-2">
+                <Coins className="h-5 w-5 text-emerald-400" />
+                <h3 className="text-sm font-bold text-white">Lançar Renda Extra</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalRendaExtraAberta(false)}
+                className="text-neutral-400 hover:text-white p-1"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSalvarRendaExtra} className="mt-4 space-y-3.5">
+              <div>
+                <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                  Valor Recebido (R$)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-xs font-bold text-emerald-400 font-mono">
+                    R$
+                  </span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="450,00"
+                    autoFocus
+                    value={rendaValor}
+                    onChange={e => setRendaValor(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 pl-9 pr-3 py-2 text-lg font-bold font-mono text-emerald-400 focus:border-emerald-500 focus:outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                  Descrição (O que foi?)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Toquei em casamento, freelance..."
+                  value={rendaDescricao}
+                  onChange={e => setRendaDescricao(e.target.value)}
+                  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                  required
+                />
+                {/* Sugestões rápidas */}
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {SUGESTOES_RENDA_EXTRA.slice(0, 4).map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setRendaDescricao(s)}
+                      className="rounded bg-neutral-800 hover:bg-neutral-700 px-2 py-0.5 text-[10px] text-neutral-400 hover:text-neutral-200 transition-colors"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                  Categoria de Renda
+                </label>
+                <select
+                  value={rendaCategoria}
+                  onChange={e => setRendaCategoria(e.target.value)}
+                  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                >
+                  {CATEGORIAS_RENDA_EXTRA.map(c => (
+                    <option key={c.id} value={c.nome}>
+                      {c.nome}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                    Quem Recebeu?
+                  </label>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['Ele', 'Ela', 'Conjunto'] as Quem[]).map(q => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => setRendaQuem(q)}
+                        className={`rounded-lg py-1.5 text-xs font-bold transition-all ${
+                          rendaQuem === q
+                            ? 'bg-emerald-500 text-neutral-950'
+                            : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
+                        }`}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                    Recebido por
+                  </label>
+                  <select
+                    value={rendaFormaRecebimento}
+                    onChange={e => setRendaFormaRecebimento(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                  >
+                    <option value="Pix">Pix</option>
+                    <option value="Dinheiro">Dinheiro</option>
+                    <option value="Transferência">Transferência</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => setModalRendaExtraAberta(false)}
+                  className="px-3 py-2 text-xs font-semibold text-neutral-400 hover:text-white rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 rounded-xl transition-all shadow-lg shadow-emerald-500/20 active:scale-95"
+                >
+                  + Somar ao Orçamento
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
