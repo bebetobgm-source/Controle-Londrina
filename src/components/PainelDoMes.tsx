@@ -22,7 +22,10 @@ import {
   substituirLancamentosNaPlanilha,
   sincronizarFixasNaPlanilha,
   anexarRendaExtraNaPlanilha,
-  puxarDadosCompletosDaPlanilha
+  puxarDadosCompletosDaPlanilha,
+  limparDuplicadosDaPlanilha,
+  zerarPlanilhaERecomessar,
+  sincronizarTudoSemDuplicar
 } from '../services/googleSheets';
 import { salvarEstado } from '../services/storage';
 import {
@@ -252,6 +255,13 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
     const novoEstado = excluirRendaExtra(id, appState);
     setAppState(novoEstado);
     setMensagemFeedback('Renda extra removida.');
+
+    const planilha = obterPlanilhaConectada();
+    if (planilha) {
+      setSincronizando(true);
+      await sincronizarTudoSemDuplicar(planilha.id, novoEstado.lancamentos, novoEstado.rendasExtras);
+      setSincronizando(false);
+    }
     setTimeout(() => setMensagemFeedback(null), 3000);
   };
 
@@ -267,7 +277,7 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
     const planilha = obterPlanilhaConectada();
     if (planilha) {
       setSincronizando(true);
-      await substituirLancamentosNaPlanilha(planilha.id, novoEstado.lancamentos);
+      await sincronizarTudoSemDuplicar(planilha.id, novoEstado.lancamentos, novoEstado.rendasExtras);
       setSincronizando(false);
     }
 
@@ -281,7 +291,9 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
 
     const planilha = obterPlanilhaConectada();
     if (planilha) {
-      await substituirLancamentosNaPlanilha(planilha.id, novoEstado.lancamentos);
+      setSincronizando(true);
+      await sincronizarTudoSemDuplicar(planilha.id, novoEstado.lancamentos, novoEstado.rendasExtras);
+      setSincronizando(false);
     }
 
     setTimeout(() => setMensagemFeedback(null), 3000);
@@ -302,7 +314,7 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
       setAppState(prev => {
         const atualizado: AppState = {
           ...prev,
-          lancamentos: res.lancamentos.length > 0 ? res.lancamentos : prev.lancamentos,
+          lancamentos: res.lancamentos,
           rendasExtras: res.rendasExtras,
           fixas: res.fixas.length > 0 ? res.fixas : prev.fixas,
           orcamento: res.orcamento && res.orcamento.length > 0 ? res.orcamento : prev.orcamento,
@@ -311,11 +323,74 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
         salvarEstado(atualizado);
         return atualizado;
       });
+      const dupInfo =
+        res.duplicadosIgnorados > 0
+          ? ` (${res.duplicadosIgnorados} duplicatas ignoradas)`
+          : '';
       setMensagemFeedback(
-        `🎉 Sincronizado! ${res.totalLancamentos} despesas, ${res.totalRendas} rendas extras e ${res.totalFixas} contas fixas atualizados.`
+        `🎉 Sincronizado! ${res.totalLancamentos} despesas, ${res.totalRendas} rendas extras e ${res.totalFixas} contas fixas atualizados.${dupInfo}`
       );
     } catch (err: any) {
       setMensagemFeedback(err.message || 'Erro ao sincronizar com a planilha.');
+    } finally {
+      setSincronizando(false);
+      setTimeout(() => setMensagemFeedback(null), 4500);
+    }
+  };
+
+  const handleLimparDuplicados = async () => {
+    const planilha = obterPlanilhaConectada();
+    if (!planilha) {
+      setMensagemFeedback('Nenhuma planilha conectada ainda.');
+      return;
+    }
+    setSincronizando(true);
+    setMensagemFeedback('Varrendo e eliminando duplicados na planilha...');
+    try {
+      const res = await limparDuplicadosDaPlanilha(planilha.id);
+      setAppState(prev => {
+        const atualizado: AppState = {
+          ...prev,
+          lancamentos: res.lancamentos,
+          rendasExtras: res.rendasExtras
+        };
+        salvarEstado(atualizado);
+        return atualizado;
+      });
+      setMensagemFeedback(`🧹 ${res.mensagem}`);
+    } catch (err: any) {
+      setMensagemFeedback(err.message || 'Erro ao limpar duplicados.');
+    } finally {
+      setSincronizando(false);
+      setTimeout(() => setMensagemFeedback(null), 5000);
+    }
+  };
+
+  const handleZerarTudo = async () => {
+    const confirmar = window.confirm(
+      '⚠️ Tem certeza que deseja zerar os lançamentos da planilha e do app? Isso apagará os dados de teste para começar do zero com seus gastos reais. Cabeçalhos e configurações serão mantidos.'
+    );
+    if (!confirmar) return;
+
+    setSincronizando(true);
+    setMensagemFeedback('Zerando lançamentos...');
+    try {
+      const planilha = obterPlanilhaConectada();
+      if (planilha) {
+        await zerarPlanilhaERecomessar(planilha.id);
+      }
+      setAppState(prev => {
+        const atualizado: AppState = {
+          ...prev,
+          lancamentos: [],
+          rendasExtras: []
+        };
+        salvarEstado(atualizado);
+        return atualizado;
+      });
+      setMensagemFeedback('Planilha e aplicativo zerados com sucesso! Comece seus lançamentos reais.');
+    } catch (err: any) {
+      setMensagemFeedback(err.message || 'Erro ao zerar planilha.');
     } finally {
       setSincronizando(false);
       setTimeout(() => setMensagemFeedback(null), 4500);
@@ -386,7 +461,7 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
                 title="Puxar dados atualizados do Google Sheets"
               >
                 <RefreshCw className={`h-3 w-3 ${sincronizando ? 'animate-spin' : ''}`} />
-                <span>{sincronizando ? 'Puxando...' : 'Puxar da Planilha'}</span>
+                <span>{sincronizando ? 'Puxando...' : 'Puxar'}</span>
               </button>
             )}
             <span className="text-xs font-mono font-bold text-white">
@@ -394,6 +469,38 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
             </span>
           </div>
         </div>
+
+        {/* Barra Rápida de Manutenção da Planilha (Eliminar duplicados ou Zerar) */}
+        {obterPlanilhaConectada() && (
+          <div className="flex items-center justify-between gap-1.5 py-1.5 px-2.5 mb-2 rounded-xl bg-neutral-950/70 border border-neutral-800 text-[11px]">
+            <span className="text-neutral-400 flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Sincronização Ativa
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleLimparDuplicados}
+                disabled={sincronizando}
+                className="flex items-center gap-1 text-amber-300 hover:text-amber-200 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-700/60 rounded-lg px-2 py-0.5 transition-colors font-medium text-[10px]"
+                title="Varre o Google Sheets e remove linhas duplicadas mantendo registros únicos"
+              >
+                <Sparkles className="h-2.5 w-2.5 text-amber-400" />
+                <span>Eliminar Duplicados</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleZerarTudo}
+                disabled={sincronizando}
+                className="flex items-center gap-1 text-neutral-400 hover:text-rose-300 bg-neutral-900 hover:bg-rose-950/40 border border-neutral-800 hover:border-rose-800/50 rounded-lg px-2 py-0.5 transition-colors text-[10px]"
+                title="Limpar lançamentos de teste para começar do zero com gastos reais"
+              >
+                <Trash2 className="h-2.5 w-2.5 text-neutral-400" />
+                <span>Zerar</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Banner para limpar lançamentos de exemplo se existirem */}
         {temLancamentosExemplo && (

@@ -253,7 +253,7 @@ export function normalizarValorNumerico(raw: any): number {
 
 /**
  * Normaliza qualquer data para ISO AAAA-MM-DD e extrai o mes_ref AAAA-MM
- * (suporta "14/10/2026", "2026-10-14", "14/10/26", etc.)
+ * (suporta serial do Google Sheets ex: 45579, "14/10/2026", "2026-10-14", ISO datetime, etc.)
  */
 export function normalizarDataISO(raw: any): { data: string; mes_ref: string } {
   const agora = new Date();
@@ -264,9 +264,22 @@ export function normalizarDataISO(raw: any): { data: string; mes_ref: string } {
     return { data: dataHojePadrao, mes_ref: mesAtualPadrao };
   }
 
+  // Se for número serial de data do Google Sheets (ex: 45579 para 14/10/2026)
+  if (typeof raw === 'number' && raw > 30000 && raw < 80000) {
+    try {
+      const dt = new Date(Math.round((raw - 25569) * 86400 * 1000));
+      if (!isNaN(dt.getTime())) {
+        const dIso = dt.toISOString().substring(0, 10);
+        return { data: dIso, mes_ref: dIso.substring(0, 7) };
+      }
+    } catch {
+      // continua para o fallback
+    }
+  }
+
   const str = String(raw).trim();
 
-  // Se já for YYYY-MM-DD
+  // Se já for YYYY-MM-DD ou contiver T
   if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
     const data = str.substring(0, 10);
     return { data, mes_ref: data.substring(0, 7) };
@@ -290,6 +303,20 @@ export function normalizarDataISO(raw: any): { data: string; mes_ref: string } {
     return { data: `${ano}-${mes}-${dia}`, mes_ref: `${ano}-${mes}` };
   }
 
+  // Se for string numérica de serial
+  const numSerial = parseFloat(str);
+  if (!isNaN(numSerial) && numSerial > 30000 && numSerial < 80000) {
+    try {
+      const dt = new Date(Math.round((numSerial - 25569) * 86400 * 1000));
+      if (!isNaN(dt.getTime())) {
+        const dIso = dt.toISOString().substring(0, 10);
+        return { data: dIso, mes_ref: dIso.substring(0, 7) };
+      }
+    } catch {
+      // continua
+    }
+  }
+
   return { data: dataHojePadrao, mes_ref: mesAtualPadrao };
 }
 
@@ -303,12 +330,13 @@ export interface ResultadoSincronizacaoPlanilha {
   totalLancamentos: number;
   totalRendas: number;
   totalFixas: number;
+  duplicadosIgnorados: number;
   mensagem: string;
 }
 
 /**
- * Puxa todos os dados das abas do Google Sheets (Lancamentos, Rendas Extras, Fixas, etc.)
- * e os normaliza para sincronizar fielmente com o aplicativo no computador ou celular.
+ * Puxa todos os dados das abas do Google Sheets com DEDUPLICAÇÃO INTELIGENTE
+ * e filtros rigorosos para ignorar cabeçalhos repetidos e linhas corrompidas.
  */
 export async function puxarDadosCompletosDaPlanilha(
   spreadsheetId: string
@@ -379,17 +407,38 @@ export async function puxarDadosCompletosDaPlanilha(
   const rowsOrcamento: any[][] = valueRanges[2]?.values || [];
   const rowsMetas: any[][] = valueRanges[3]?.values || [];
 
-  // 3. Processar Lançamentos e Rendas Extras
+  // 3. Processar Lançamentos e Rendas Extras COM DEDUPLICAÇÃO INTELIGENTE
   const lancamentos: Lancamento[] = [];
   const rendasExtras: RendaExtra[] = [];
+  const seenIds = new Set<string>();
+  const seenFingerprints = new Set<string>();
+  let duplicadosIgnorados = 0;
 
   rowsLancamentos.forEach((r, index) => {
     if (!r || r.length === 0) return;
 
+    // Ignorar linhas de cabeçalho que tenham sido inseridas ou coladas no meio
+    const c0 = String(r[0] || '').trim().toLowerCase();
+    const c1 = String(r[1] || '').trim().toLowerCase();
+    const c2 = String(r[2] || '').trim().toLowerCase();
+    if (
+      c0 === 'id' ||
+      c0 === 'data' ||
+      c1 === 'data' ||
+      c1 === 'valor' ||
+      c2 === 'valor' ||
+      c0.startsWith('código') ||
+      c0.startsWith('codigo')
+    ) {
+      return;
+    }
+
     // Detectar dinamicamente se a coluna A é ID ou se o usuário começou direto pela Data
     const r0EhData =
       r[0] &&
-      (/^\d{4}-\d{2}-\d{2}/.test(String(r[0])) || /^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(String(r[0])));
+      (/^\d{4}-\d{2}-\d{2}/.test(String(r[0])) ||
+        /^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(String(r[0])) ||
+        (typeof r[0] === 'number' && r[0] > 30000 && r[0] < 80000));
 
     let idRaw = r0EhData ? undefined : r[0];
     let dataRaw = r0EhData ? r[0] : r[1];
@@ -404,23 +453,41 @@ export async function puxarDadosCompletosDaPlanilha(
     let criadoRaw = r0EhData ? undefined : r[10];
 
     const valor = normalizarValorNumerico(valorRaw);
-    if (valor <= 0 && !dataRaw) return;
+    if (valor <= 0) return; // Se não tem valor monetário positivo, ignora
 
     const { data, mes_ref } = normalizarDataISO(dataRaw);
     const categoria = String(catRaw || 'Mercado').trim();
     const subcategoria = String(subcatRaw || 'Geral').trim();
     const quem = quemRaw === 'Ela' || quemRaw === 'Conjunto' ? quemRaw : 'Ele';
+    const estabelecimento = estRaw ? String(estRaw).trim() : '';
 
-    // Se a categoria for "Renda Extra" ou "Receita", separar para rendas extras
+    // DEDUPLICAÇÃO INTELIGENTE:
+    // Identifica se já existe o mesmo ID explícito ou a mesma assinatura
+    // (Data + Valor com 2 casas + Categoria + Subcategoria + Estabelecimento/Descrição + Quem)
+    const idLimpo = idRaw ? String(idRaw).trim() : '';
+    const fingerprint = `${data}|${valor.toFixed(2)}|${categoria.toLowerCase()}|${subcategoria.toLowerCase()}|${estabelecimento.toLowerCase()}|${quem}`;
+
+    if (idLimpo && seenIds.has(idLimpo)) {
+      duplicadosIgnorados++;
+      return;
+    }
+    if (seenFingerprints.has(fingerprint)) {
+      duplicadosIgnorados++;
+      return;
+    }
+
+    if (idLimpo) seenIds.add(idLimpo);
+    seenFingerprints.add(fingerprint);
+
     const catLower = categoria.toLowerCase();
     if (catLower === 'renda extra' || catLower === 'receita') {
       rendasExtras.push({
-        id: String(idRaw || `renda-sinc-${index}-${Date.now()}`),
+        id: idLimpo || `renda-sinc-${index}-${Date.now()}`,
         data,
         mes_ref,
         valor,
         categoria: subcategoria || 'Outros',
-        descricao: String(estRaw || obsRaw || 'Renda Extra').trim(),
+        descricao: estabelecimento || (obsRaw ? String(obsRaw).trim() : 'Renda Extra'),
         quem,
         forma_recebimento: formaRaw || 'Pix',
         observacao: obsRaw ? String(obsRaw) : undefined,
@@ -428,14 +495,14 @@ export async function puxarDadosCompletosDaPlanilha(
       });
     } else {
       lancamentos.push({
-        id: String(idRaw || `sinc-${index}-${Date.now()}`),
+        id: idLimpo || `sinc-${index}-${Date.now()}`,
         data,
         mes_ref,
         valor,
         categoria: categoria || 'Mercado',
         subcategoria: subcategoria || 'Geral',
         quem,
-        estabelecimento: estRaw ? String(estRaw) : undefined,
+        estabelecimento: estabelecimento || undefined,
         forma_pagamento: (['Pix', 'Débito', 'Crédito', 'Dinheiro'].includes(formaRaw)
           ? formaRaw
           : 'Débito') as any,
@@ -523,7 +590,10 @@ export async function puxarDadosCompletosDaPlanilha(
     totalLancamentos: lancamentos.length,
     totalRendas: rendasExtras.length,
     totalFixas: fixas.length,
-    mensagem: `Sincronizado: ${lancamentos.length} despesas, ${rendasExtras.length} rendas extras e ${fixas.length} contas fixas.`
+    duplicadosIgnorados,
+    mensagem: `Sincronizado: ${lancamentos.length} despesas, ${rendasExtras.length} rendas extras e ${fixas.length} contas fixas.${
+      duplicadosIgnorados > 0 ? ` (${duplicadosIgnorados} duplicatas filtradas)` : ''
+    }`
   };
 }
 
@@ -791,4 +861,170 @@ export async function anexarRendaExtraNaPlanilha(
   }
 }
 
+/**
+ * Reescreve a lista completa de lançamentos e rendas extras na planilha de forma limpa e sem duplicados
+ */
+export async function sincronizarTudoSemDuplicar(
+  spreadsheetId: string,
+  lancamentos: Lancamento[],
+  rendasExtras: RendaExtra[] = []
+): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    if (!token) return false;
 
+    // 1. Limpar todas as linhas de dados a partir da linha 2
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K:clear`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+
+    // Linhas de despesas
+    const linhasDespesas = lancamentos.map(l => [
+      l.id,
+      l.data,
+      l.valor,
+      l.categoria,
+      l.subcategoria,
+      l.quem,
+      l.estabelecimento || '',
+      l.forma_pagamento || 'Débito',
+      l.essencial || 'S',
+      l.observacao || '',
+      l.criado_em || new Date().toISOString()
+    ]);
+
+    // Linhas de rendas extras
+    const linhasRendas = rendasExtras.map(r => [
+      r.id,
+      r.data,
+      r.valor,
+      'Renda Extra',
+      r.categoria,
+      r.quem,
+      r.descricao,
+      r.forma_recebimento || 'Pix',
+      'S',
+      r.observacao || 'Entrada extra de renda no orçamento',
+      r.criado_em || new Date().toISOString()
+    ]);
+
+    const todasLinhas = [...linhasDespesas, ...linhasRendas];
+    if (todasLinhas.length === 0) {
+      localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+      return true;
+    }
+
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K?valueInputOption=USER_ENTERED`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          range: 'Lancamentos!A2:K',
+          values: todasLinhas
+        })
+      }
+    );
+
+    if (res.ok) {
+      localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('Erro ao sincronizar tudo sem duplicar:', err);
+    return false;
+  }
+}
+
+/**
+ * Varre a planilha no Google Sheets, elimina todas as linhas duplicadas e reescreve
+ * a aba Lancamentos perfeitamente limpa e organizada.
+ */
+export async function limparDuplicadosDaPlanilha(
+  spreadsheetId: string
+): Promise<{
+  sucesso: boolean;
+  duplicadosRemovidos: number;
+  totalRestante: number;
+  lancamentos: Lancamento[];
+  rendasExtras: RendaExtra[];
+  mensagem: string;
+}> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error('Você precisa estar conectado à sua conta Google para limpar a planilha.');
+  }
+
+  // 1. Ler as linhas brutas da aba Lancamentos para contar o total antes da limpeza
+  const rawRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  let totalLinhasBrutas = 0;
+  if (rawRes.ok) {
+    const rawJson = await rawRes.json();
+    totalLinhasBrutas = (rawJson.values || []).filter((r: any[]) => r && r.length > 0).length;
+  }
+
+  // 2. Puxar com o algoritmo de deduplicação inteligente
+  const dados = await puxarDadosCompletosDaPlanilha(spreadsheetId);
+  const totalUnicos = dados.lancamentos.length + dados.rendasExtras.length;
+  const duplicadosRemovidos = Math.max(0, totalLinhasBrutas - totalUnicos);
+
+  // 3. Reescrever a aba Lancamentos com APENAS os itens únicos
+  await sincronizarTudoSemDuplicar(spreadsheetId, dados.lancamentos, dados.rendasExtras);
+
+  return {
+    sucesso: true,
+    duplicadosRemovidos,
+    totalRestante: totalUnicos,
+    lancamentos: dados.lancamentos,
+    rendasExtras: dados.rendasExtras,
+    mensagem:
+      duplicadosRemovidos > 0
+        ? `Varredura concluída! ${duplicadosRemovidos} lançamento(s) duplicado(s) removido(s). Restaram ${totalUnicos} lançamento(s) únicos e organizados.`
+        : `Nenhum lançamento duplicado encontrado. Sua planilha já possui apenas dados únicos (${totalUnicos} registros).`
+  };
+}
+
+/**
+ * Zera completamente os lançamentos da planilha e do app para começar do zero
+ * Mantém os cabeçalhos, categorias, contas fixas e orçamentos intactos.
+ */
+export async function zerarPlanilhaERecomessar(
+  spreadsheetId: string
+): Promise<{ sucesso: boolean; mensagem: string }> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error('Você precisa estar conectado com sua conta Google para zerar a planilha.');
+  }
+
+  // Limpar todas as linhas da aba Lancamentos a partir da linha 2
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Lancamentos!A2:K:clear`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` }
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error('Não foi possível limpar a aba Lancamentos na sua planilha Google Sheets.');
+  }
+
+  localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+
+  return {
+    sucesso: true,
+    mensagem: 'Planilha e aplicativo zerados com sucesso! Prontos para começar seus lançamentos reais do zero.'
+  };
+}

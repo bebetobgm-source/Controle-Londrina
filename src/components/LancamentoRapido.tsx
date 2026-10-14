@@ -12,7 +12,8 @@ import { ESTABELECIMENTOS_SUGERIDOS, CATEGORIAS_RENDA_EXTRA, SUGESTOES_RENDA_EXT
 import {
   obterPlanilhaConectada,
   anexarLancamentoNaPlanilha,
-  anexarRendaExtraNaPlanilha
+  anexarRendaExtraNaPlanilha,
+  sincronizarTudoSemDuplicar
 } from '../services/googleSheets';
 import { Undo2, CheckCircle2, Store, Calendar, ArrowRight, CloudCheck, Coins, TrendingUp } from 'lucide-react';
 
@@ -222,13 +223,24 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
 
   const handleDesfazer = () => {
     if (!ultimoLancamentoId) return;
+    let estadoRestaurado: AppState;
     if (ultimoTipoLancado === 'renda_extra') {
-      const estadoRestaurado = excluirRendaExtra(ultimoLancamentoId, appState);
+      estadoRestaurado = excluirRendaExtra(ultimoLancamentoId, appState);
       setAppState(estadoRestaurado);
     } else {
-      const estadoRestaurado = excluirLancamento(ultimoLancamentoId, appState);
+      estadoRestaurado = excluirLancamento(ultimoLancamentoId, appState);
       setAppState(estadoRestaurado);
     }
+
+    const planilhaConectada = obterPlanilhaConectada();
+    if (planilhaConectada) {
+      sincronizarTudoSemDuplicar(
+        planilhaConectada.id,
+        estadoRestaurado.lancamentos,
+        estadoRestaurado.rendasExtras
+      );
+    }
+
     setUltimoLancamentoId(null);
     setFeedbackImpacto(null);
     setAlertaRecente(null);

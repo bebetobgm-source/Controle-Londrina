@@ -16,7 +16,10 @@ import {
   puxarLancamentosDaPlanilha,
   puxarDadosCompletosDaPlanilha,
   buscarPlanilhaNoDrive,
-  anexarLancamentoNaPlanilha
+  anexarLancamentoNaPlanilha,
+  limparDuplicadosDaPlanilha,
+  zerarPlanilhaERecomessar,
+  sincronizarTudoSemDuplicar
 } from '../services/googleSheets';
 import { AppState, salvarEstado } from '../services/storage';
 import { formatarMoeda } from '../services/engine';
@@ -36,7 +39,9 @@ import {
   Layers,
   ArrowDownToLine,
   ArrowUpToLine,
-  Lock
+  Lock,
+  Trash2,
+  CheckCheck
 } from 'lucide-react';
 import { gasFiles } from '../data/gasCode';
 
@@ -171,7 +176,7 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
       setAppState(prev => {
         const atualizado: AppState = {
           ...prev,
-          lancamentos: resultado.lancamentos.length > 0 ? resultado.lancamentos : prev.lancamentos,
+          lancamentos: resultado.lancamentos,
           rendasExtras: resultado.rendasExtras,
           fixas: resultado.fixas.length > 0 ? resultado.fixas : prev.fixas,
           orcamento: resultado.orcamento && resultado.orcamento.length > 0 ? resultado.orcamento : prev.orcamento,
@@ -182,12 +187,15 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
       });
 
       setPlanilha(obterPlanilhaConectada());
+      const dupInfo =
+        resultado.duplicadosIgnorados > 0
+          ? ` (${resultado.duplicadosIgnorados} lançamentos repetidos foram ignorados automaticamente)`
+          : '';
       setMensagemSucesso(
-        `🎉 Sincronizado com sucesso! Carregados: ${resultado.totalLancamentos} despesas, ${resultado.totalRendas} rendas extras e ${resultado.totalFixas} contas fixas. Seus dados estão idênticos aos do computador.`
+        `🎉 Sincronizado com sucesso! Carregados: ${resultado.totalLancamentos} despesas, ${resultado.totalRendas} rendas extras e ${resultado.totalFixas} contas fixas.${dupInfo}`
       );
     } catch (err: any) {
       console.error('Erro ao sincronizar:', err);
-      // Se for token expirado, sugerir login
       if (err.message?.includes('login') || err.message?.includes('autenticar') || err.message?.includes('permissões')) {
         setMensagemErro('Sessão expirada ou sem permissão. Clique em "Entrar com o Google" para autorizar novamente.');
       } else {
@@ -204,25 +212,95 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
     executarPuxadaDeDados();
   };
 
-  const handleEnviarTodosParaPlanilha = async () => {
+  const handleSincronizarTudoSemDuplicar = async () => {
     if (!planilha) return;
 
     setModalConfirmacao({
       aberto: true,
-      titulo: 'Enviar Lançamentos para a Planilha?',
-      mensagem: `Deseja enviar todos os ${appState.lancamentos.length} lançamentos registrados no aplicativo para a sua planilha do Google Sheets?`,
+      titulo: 'Sincronizar Dados com a Planilha?',
+      mensagem: `Deseja enviar os dados do aplicativo para a planilha de forma limpa e sem duplicar? A aba 'Lancamentos' será atualizada com os ${appState.lancamentos.length} gastos e ${appState.rendasExtras.length} rendas extras sem criar linhas repetidas.`,
       acao: async () => {
         setCarregando(true);
         setMensagemErro(null);
         try {
-          let enviados = 0;
-          for (const l of appState.lancamentos) {
-            const ok = await anexarLancamentoNaPlanilha(planilha.id, l);
-            if (ok) enviados++;
+          const ok = await sincronizarTudoSemDuplicar(
+            planilha.id,
+            appState.lancamentos,
+            appState.rendasExtras
+          );
+          if (ok) {
+            setMensagemSucesso('Planilha sincronizada perfeitamente sem duplicatas!');
+          } else {
+            setMensagemErro('Erro ao sincronizar planilha.');
           }
-          setMensagemSucesso(`${enviados} lançamentos enviados para a planilha!`);
         } catch (err: any) {
           setMensagemErro(err.message || 'Erro ao enviar lançamentos.');
+        } finally {
+          setCarregando(false);
+          setModalConfirmacao(null);
+        }
+      }
+    });
+  };
+
+  const handleLimparDuplicadosPlanilha = async () => {
+    if (!planilha) return;
+
+    setModalConfirmacao({
+      aberto: true,
+      titulo: 'Eliminar Lançamentos Duplicados da Planilha?',
+      mensagem:
+        'O sistema fará uma varredura completa na aba Lancamentos da sua planilha Google Sheets, identificando e removendo todas as linhas duplicadas (mesmo ID ou mesma data, valor, categoria e descrição). Apenas uma cópia única de cada lançamento será mantida.',
+      acao: async () => {
+        setCarregando(true);
+        setMensagemErro(null);
+        try {
+          const res = await limparDuplicadosDaPlanilha(planilha.id);
+          setAppState(prev => {
+            const atualizado: AppState = {
+              ...prev,
+              lancamentos: res.lancamentos,
+              rendasExtras: res.rendasExtras
+            };
+            salvarEstado(atualizado);
+            return atualizado;
+          });
+          setMensagemSucesso(`🧹 ${res.mensagem}`);
+        } catch (err: any) {
+          setMensagemErro(err.message || 'Erro ao limpar duplicados da planilha.');
+        } finally {
+          setCarregando(false);
+          setModalConfirmacao(null);
+        }
+      }
+    });
+  };
+
+  const handleZerarPlanilha = async () => {
+    if (!planilha) return;
+
+    setModalConfirmacao({
+      aberto: true,
+      titulo: '⚠️ Zerar Planilha e Recomeçar?',
+      mensagem:
+        'Tem certeza que deseja apagar os lançamentos da planilha e do aplicativo? Isso limpará todas as despesas e rendas extras registradas para você começar do zero com seus gastos reais. Os cabeçalhos da planilha, orçamento e contas fixas serão preservados.',
+      acao: async () => {
+        setCarregando(true);
+        setMensagemErro(null);
+        try {
+          await zerarPlanilhaERecomessar(planilha.id);
+          setAppState(prev => {
+            const atualizado: AppState = {
+              ...prev,
+              lancamentos: [],
+              rendasExtras: []
+            };
+            salvarEstado(atualizado);
+            return atualizado;
+          });
+          setMensagemSucesso('Planilha e aplicativo zerados com sucesso! Comece do zero com seus lançamentos reais.');
+        } catch (err: any) {
+          setMensagemErro(err.message || 'Erro ao zerar planilha.');
         } finally {
           setCarregando(false);
           setModalConfirmacao(null);
@@ -391,31 +469,75 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
                   </div>
                 </div>
 
+                {/* Aviso de Sincronização Automática */}
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/30 p-3 text-xs text-neutral-300 flex items-start gap-2.5">
+                  <CheckCheck className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="text-emerald-300 font-bold block mb-0.5">Sincronização Automática Ativa</strong>
+                    <p className="text-[11px] text-neutral-400 leading-relaxed">
+                      Novos gastos e rendas lançados no app são salvos na sua planilha imediatamente. Ao abrir o app, seus dados são atualizados automaticamente com o que estiver no Sheets.
+                    </p>
+                  </div>
+                </div>
+
                 {/* Ações Rápidas de Sincronização */}
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={handlePuxarDaPlanilha}
                     disabled={carregando}
-                    className="flex items-center justify-center gap-1.5 rounded-xl border border-emerald-600/50 bg-emerald-950/40 hover:bg-emerald-900/50 px-3 py-3 text-xs font-bold text-white transition-all active:scale-98 disabled:opacity-50"
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-emerald-600/50 bg-emerald-950/40 hover:bg-emerald-900/50 px-3 py-2.5 text-xs font-bold text-white transition-all active:scale-98 disabled:opacity-50"
                   >
                     {carregando ? (
                       <RefreshCw className="h-4 w-4 text-emerald-400 animate-spin" />
                     ) : (
                       <ArrowDownToLine className="h-4 w-4 text-emerald-400" />
                     )}
-                    <span>{carregando ? 'Puxando da Planilha...' : 'Puxar da Planilha (Atualizar)'}</span>
+                    <span>{carregando ? 'Puxando...' : 'Puxar do Sheets'}</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={handleEnviarTodosParaPlanilha}
+                    onClick={handleSincronizarTudoSemDuplicar}
                     disabled={carregando}
                     className="flex items-center justify-center gap-1.5 rounded-xl border border-neutral-700 bg-neutral-800/80 hover:bg-neutral-800 px-3 py-2.5 text-xs font-semibold text-white transition-colors active:scale-98"
                   >
                     <ArrowUpToLine className="h-4 w-4 text-sky-400" />
-                    <span>Enviar Todos</span>
+                    <span>Enviar Sem Duplicar</span>
                   </button>
+                </div>
+
+                {/* Ferramentas de Limpeza: Eliminar Duplicados e Zerar Planilha */}
+                <div className="space-y-2 pt-1 border-t border-neutral-800/80">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                      Manutenção da Planilha
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={handleLimparDuplicadosPlanilha}
+                      disabled={carregando}
+                      className="flex items-center justify-center gap-1.5 rounded-xl border border-amber-600/40 bg-amber-950/30 hover:bg-amber-900/40 px-3 py-2.5 text-xs font-bold text-amber-200 transition-colors active:scale-98"
+                      title="Varre a planilha no Sheets e remove linhas duplicadas mantendo apenas 1 cópia de cada lançamento"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                      <span>Eliminar Duplicados</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleZerarPlanilha}
+                      disabled={carregando}
+                      className="flex items-center justify-center gap-1.5 rounded-xl border border-rose-900/50 bg-rose-950/20 hover:bg-rose-900/40 px-3 py-2.5 text-xs font-semibold text-rose-300 transition-colors active:scale-98"
+                      title="Apaga os lançamentos de teste para começar do zero com gastos reais"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                      <span>Zerar Planilha (Começar do Zero)</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="pt-2 flex justify-end">

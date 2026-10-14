@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { carregarEstadoInicial, salvarEstado, AppState } from './services/storage';
 import { LancamentoRapido } from './components/LancamentoRapido';
 import { PainelDoMes } from './components/PainelDoMes';
@@ -15,9 +15,15 @@ import {
   AlertTriangle,
   X,
   Calendar,
-  CloudCheck
+  CloudCheck,
+  RefreshCw
 } from 'lucide-react';
-import { obterPlanilhaConectada } from './services/googleSheets';
+import {
+  obterPlanilhaConectada,
+  puxarDadosCompletosDaPlanilha,
+  buscarPlanilhaNoDrive
+} from './services/googleSheets';
+import { initAuth } from './services/googleAuth';
 
 type AbaAtiva = 'lancamento' | 'painel' | 'conselheiro' | 'simulador' | 'testes';
 
@@ -25,6 +31,54 @@ export default function App() {
   const [appState, setAppState] = useState<AppState>(() => carregarEstadoInicial());
   const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('lancamento');
   const [alertaCriticoDispensado, setAlertaCriticoDispensado] = useState<boolean>(false);
+  const [sincronizandoNuvem, setSincronizandoNuvem] = useState<boolean>(false);
+  const [statusSincronizacao, setStatusSincronizacao] = useState<'ocioso' | 'sincronizando' | 'sincronizado'>('ocioso');
+
+  // SINCRONIZAÇÃO AUTOMÁTICA EM SEGUNDO PLANO:
+  // Ao abrir o app ou ao conectar a conta Google, busca a planilha e popula automaticamente
+  useEffect(() => {
+    let cancelado = false;
+    const unsub = initAuth(async () => {
+      if (cancelado) return;
+      let planilha = obterPlanilhaConectada();
+      if (!planilha) {
+        planilha = await buscarPlanilhaNoDrive();
+      }
+      if (planilha && !cancelado) {
+        setSincronizandoNuvem(true);
+        setStatusSincronizacao('sincronizando');
+        try {
+          const resultado = await puxarDadosCompletosDaPlanilha(planilha.id);
+          if (!cancelado) {
+            setAppState(prev => {
+              const atualizado: AppState = {
+                ...prev,
+                lancamentos: resultado.lancamentos,
+                rendasExtras: resultado.rendasExtras,
+                fixas: resultado.fixas.length > 0 ? resultado.fixas : prev.fixas,
+                orcamento: resultado.orcamento && resultado.orcamento.length > 0 ? resultado.orcamento : prev.orcamento,
+                reserva: resultado.reserva && resultado.reserva.length > 0 ? resultado.reserva : prev.reserva
+              };
+              salvarEstado(atualizado);
+              return atualizado;
+            });
+            setStatusSincronizacao('sincronizado');
+          }
+        } catch (err) {
+          console.warn('Sincronização em background finalizada com aviso:', err);
+        } finally {
+          if (!cancelado) {
+            setSincronizandoNuvem(false);
+          }
+        }
+      }
+    });
+
+    return () => {
+      cancelado = true;
+      unsub();
+    };
+  }, []);
 
   const agora = new Date();
   const diaAtual = appState.diaAtualSimulado || agora.getDate();
@@ -82,11 +136,15 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setAbaAtiva('testes')}
-                  className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-950/70 border border-emerald-800/80 px-2 py-0.5 rounded-full hover:bg-emerald-900/50 transition-colors"
-                  title="Planilha Google Sheets conectada"
+                  className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 bg-emerald-950/70 border border-emerald-800/80 px-2 py-0.5 rounded-full hover:bg-emerald-900/50 transition-colors"
+                  title="Planilha Google Sheets conectada e sincronizada"
                 >
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Sheets</span>
+                  {sincronizandoNuvem ? (
+                    <RefreshCw className="h-2.5 w-2.5 animate-spin text-emerald-400" />
+                  ) : (
+                    <CloudCheck className="h-3 w-3 text-emerald-400" />
+                  )}
+                  <span>{sincronizandoNuvem ? 'Sincronizando...' : 'Sheets'}</span>
                 </button>
               ) : (
                 <button
