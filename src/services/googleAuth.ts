@@ -94,14 +94,43 @@ export const getAccessToken = async (): Promise<string | null> => {
 
   if (savedToken && savedTime) {
     const elapsedMinutes = (Date.now() - parseInt(savedTime, 10)) / (1000 * 60);
-    // Tokens duram 60 min no Google; consideramos válido até 55 min
-    if (elapsedMinutes < 55) {
+    // Tokens OAuth do Google duram 60 min. Mantemos válido enquanto estiver dentro do período.
+    if (elapsedMinutes < 60) {
       cachedAccessToken = savedToken;
       return savedToken;
     }
   }
 
   return null;
+};
+
+/**
+ * Retorna true se o usuário já fez login alguma vez mas o token expirou
+ */
+export const isTokenExpirado = (): boolean => {
+  const savedToken = localStorage.getItem(STORAGE_TOKEN_KEY);
+  const savedTime = localStorage.getItem(STORAGE_TOKEN_TIME_KEY);
+  if (!savedToken || !savedTime) return false;
+  const elapsedMinutes = (Date.now() - parseInt(savedTime, 10)) / (1000 * 60);
+  return elapsedMinutes >= 55;
+};
+
+/**
+ * Invalida o token em cache se a API do Google retornar 401 Unauthorized
+ */
+export const invalidarTokenGoogle = () => {
+  cachedAccessToken = null;
+  localStorage.removeItem(STORAGE_TOKEN_KEY);
+  localStorage.removeItem(STORAGE_TOKEN_TIME_KEY);
+  window.dispatchEvent(new CustomEvent('orcamento-google-sessao-expirada'));
+};
+
+/**
+ * Renova a sessão do Google com um clique
+ */
+export const renovarTokenGoogle = async (): Promise<string | null> => {
+  const res = await googleSignIn();
+  return res?.accessToken || null;
 };
 
 export const getCurrentUser = (): User | null => {
@@ -114,4 +143,5 @@ export const logout = async () => {
   cachedUser = null;
   localStorage.removeItem(STORAGE_TOKEN_KEY);
   localStorage.removeItem(STORAGE_TOKEN_TIME_KEY);
+  window.dispatchEvent(new CustomEvent('orcamento-google-logout'));
 };

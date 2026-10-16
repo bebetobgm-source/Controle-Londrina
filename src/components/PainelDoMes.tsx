@@ -42,7 +42,8 @@ import {
   Plus,
   Coins,
   Music,
-  X
+  X,
+  Users
 } from 'lucide-react';
 import { ContaFixa, RendaExtra, Quem } from '../types';
 import { CATEGORIAS_RENDA_EXTRA, SUGESTOES_RENDA_EXTRA } from '../data/defaultData';
@@ -501,32 +502,55 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
       )}
 
       {/* 2.5 LISTA TRANSPARENTE DE LANÇAMENTOS DO MÊS */}
-      <div id="card-lancamentos-recentes" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 shadow-lg">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <Receipt className="h-4 w-4 text-neutral-400" />
-            <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">
-              Lançamentos do Mês ({appState.lancamentos.length})
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            {obterPlanilhaConectada() && (
-              <button
-                type="button"
-                onClick={handlePuxarDaPlanilha}
-                disabled={sincronizando}
-                className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 text-[11px] font-bold text-emerald-400 transition-all active:scale-95 disabled:opacity-50"
-                title="Puxar dados atualizados do Google Sheets"
-              >
-                <RefreshCw className={`h-3 w-3 ${sincronizando ? 'animate-spin' : ''}`} />
-                <span>{sincronizando ? 'Puxando...' : 'Puxar'}</span>
-              </button>
-            )}
-            <span className="text-xs font-mono font-bold text-white">
-              Total: {formatarMoeda(appState.lancamentos.reduce((acc, l) => acc + l.valor, 0))}
-            </span>
-          </div>
-        </div>
+      {(() => {
+        const totalGastoLancamentos = appState.lancamentos.reduce((acc, l) => acc + l.valor, 0);
+        const gastoEle = appState.lancamentos.filter(l => l.quem === 'Ele').reduce((acc, l) => acc + l.valor, 0);
+        const gastoEla = appState.lancamentos.filter(l => l.quem === 'Ela').reduce((acc, l) => acc + l.valor, 0);
+        const gastoConjunto = appState.lancamentos.filter(l => l.quem === 'Conjunto').reduce((acc, l) => acc + l.valor, 0);
+
+        return (
+          <div id="card-lancamentos-recentes" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 shadow-lg">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Receipt className="h-4 w-4 text-neutral-400" />
+                <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">
+                  Lançamentos do Mês ({appState.lancamentos.length})
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {obterPlanilhaConectada() && (
+                  <button
+                    type="button"
+                    onClick={handlePuxarDaPlanilha}
+                    disabled={sincronizando}
+                    className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 text-[11px] font-bold text-emerald-400 transition-all active:scale-95 disabled:opacity-50"
+                    title="Puxar dados atualizados do Google Sheets em tempo real"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${sincronizando ? 'animate-spin' : ''}`} />
+                    <span>{sincronizando ? 'Puxando...' : 'Puxar do Sheets'}</span>
+                  </button>
+                )}
+                <span className="text-xs font-mono font-bold text-white">
+                  Total: {formatarMoeda(totalGastoLancamentos)}
+                </span>
+              </div>
+            </div>
+
+            {/* Divisão dos Gastos do Casal no Mês */}
+            <div className="grid grid-cols-3 gap-2 my-2.5 p-2 rounded-xl bg-neutral-950/70 border border-neutral-800 text-center">
+              <div className="p-1.5 rounded-lg bg-sky-950/40 border border-sky-800/40">
+                <span className="text-[10px] font-bold text-sky-400 block">🔵 Ele</span>
+                <span className="text-xs font-mono font-bold text-white">{formatarMoeda(gastoEle)}</span>
+              </div>
+              <div className="p-1.5 rounded-lg bg-purple-950/40 border border-purple-800/40">
+                <span className="text-[10px] font-bold text-purple-400 block">🟣 Ela</span>
+                <span className="text-xs font-mono font-bold text-white">{formatarMoeda(gastoEla)}</span>
+              </div>
+              <div className="p-1.5 rounded-lg bg-emerald-950/40 border border-emerald-800/40">
+                <span className="text-[10px] font-bold text-emerald-400 block">🟢 Casal</span>
+                <span className="text-xs font-mono font-bold text-white">{formatarMoeda(gastoConjunto)}</span>
+              </div>
+            </div>
 
         {/* Barra Rápida de Manutenção da Planilha (Eliminar duplicados ou Zerar) */}
         {obterPlanilhaConectada() && (
@@ -612,9 +636,22 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
                       <span className="rounded bg-neutral-800 px-1.5 py-0.2 text-[10px] text-neutral-400">
                         {l.categoria}
                       </span>
-                      <span className="text-[10px] text-neutral-500">
-                        ({l.quem})
-                      </span>
+                      {l.quem === 'Ela' ? (
+                        <span className="rounded-full bg-purple-950/90 border border-purple-700/80 text-purple-300 font-bold px-2 py-0.5 text-[9px] flex items-center gap-1 shadow-sm">
+                          <span className="h-1.5 w-1.5 rounded-full bg-purple-400"></span>
+                          Ela
+                        </span>
+                      ) : l.quem === 'Ele' ? (
+                        <span className="rounded-full bg-sky-950/90 border border-sky-700/80 text-sky-300 font-bold px-2 py-0.5 text-[9px] flex items-center gap-1 shadow-sm">
+                          <span className="h-1.5 w-1.5 rounded-full bg-sky-400"></span>
+                          Ele
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-emerald-950/90 border border-emerald-700/80 text-emerald-300 font-bold px-2 py-0.5 text-[9px] flex items-center gap-1 shadow-sm">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                          Casal
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] text-neutral-500 flex items-center gap-2 mt-0.5">
                       <span>{formatarDataBR(l.data)}</span>
@@ -648,6 +685,8 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
           </div>
         )}
       </div>
+        );
+      })()}
 
       {/* 3. BARRAS POR CATEGORIA VARIÁVEL (com marca vertical do dia) */}
       <div id="card-barras-categorias" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 shadow-lg">

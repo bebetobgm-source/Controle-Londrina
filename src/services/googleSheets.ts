@@ -1,5 +1,5 @@
 import { Lancamento, RendaExtra, ContaFixa, OrcamentoItem, TransacaoReserva } from '../types';
-import { getAccessToken } from './googleAuth';
+import { getAccessToken, invalidarTokenGoogle } from './googleAuth';
 import { FIXAS_PADRAO, ORCAMENTO_PADRAO, CONFIG_PADRAO } from '../data/defaultData';
 
 const SHEETS_STORAGE_KEYS = {
@@ -220,8 +220,14 @@ export async function anexarLancamentoNaPlanilha(
       }
     );
 
+    if (res.status === 401) {
+      invalidarTokenGoogle();
+      return false;
+    }
+
     if (res.ok) {
       localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+      window.dispatchEvent(new CustomEvent('orcamento-sync-updated'));
       return true;
     }
     return false;
@@ -353,10 +359,14 @@ export async function puxarDadosCompletosDaPlanilha(
   );
 
   if (!metaRes.ok) {
+    if (metaRes.status === 401) {
+      invalidarTokenGoogle();
+      throw new Error('Sua sessão do Google expirou. Clique para reconectar sua conta e sincronizar os gastos do casal.');
+    }
     const erroJson = await metaRes.json().catch(() => ({}));
     throw new Error(
       erroJson.error?.message ||
-        'Não foi possível acessar a planilha. Verifique as permissões da sua conta Google.'
+        'Não foi possível acessar a planilha. Verifique se a planilha está compartilhada com sua conta Google.'
     );
   }
 
@@ -375,16 +385,16 @@ export async function puxarDadosCompletosDaPlanilha(
   const abaMetas =
     abasDisponiveis.find(a => normalizarNomeAba(a).includes('meta') || normalizarNomeAba(a).includes('reserva')) || 'Metas';
 
-  // 2. Buscar todas as abas em uma única chamada em lote (batchGet) a partir da linha 1 para não perder nenhum dado
+  // 2. Buscar todas as abas em uma única chamada em lote (batchGet) sem limite rígido de linhas
   const rangesToFetch = [
-    `${encodeURIComponent(abaLancamentos)}!A1:Z500`,
-    `${encodeURIComponent(abaFixas)}!A1:F100`
+    `${encodeURIComponent(abaLancamentos)}!A1:Z`,
+    `${encodeURIComponent(abaFixas)}!A1:F`
   ];
   if (abasDisponiveis.includes(abaOrcamento)) {
-    rangesToFetch.push(`${encodeURIComponent(abaOrcamento)}!A1:D100`);
+    rangesToFetch.push(`${encodeURIComponent(abaOrcamento)}!A1:D`);
   }
   if (abasDisponiveis.includes(abaMetas)) {
-    rangesToFetch.push(`${encodeURIComponent(abaMetas)}!A1:E100`);
+    rangesToFetch.push(`${encodeURIComponent(abaMetas)}!A1:E`);
   }
 
   const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${rangesToFetch
@@ -396,6 +406,10 @@ export async function puxarDadosCompletosDaPlanilha(
   });
 
   if (!batchRes.ok) {
+    if (batchRes.status === 401) {
+      invalidarTokenGoogle();
+      throw new Error('Sua sessão do Google expirou. Clique para reconectar sua conta e sincronizar os gastos do casal.');
+    }
     throw new Error('Falha ao ler os dados das abas da planilha.');
   }
 

@@ -45,7 +45,8 @@ import {
   Share2,
   Smartphone,
   HelpCircle,
-  ShieldAlert
+  ShieldAlert,
+  Users
 } from 'lucide-react';
 import { gasFiles } from '../data/gasCode';
 
@@ -494,33 +495,47 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
 
               {mostrarGuiaEsposa && (
                 <div className="space-y-2 text-[11px] text-neutral-300 pt-1 border-t border-sky-900/40 animate-in fade-in">
-                  <div className="p-2 rounded-lg bg-neutral-950/60 border border-neutral-800 space-y-1">
-                    <p className="font-bold text-amber-300 flex items-center gap-1">
-                      <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
-                      1. Tela "O Google não verificou este app":
+                  <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-800/60 space-y-1.5">
+                    <p className="font-bold text-rose-300 flex items-center gap-1">
+                      <ShieldAlert className="h-3.5 w-3.5 text-rose-400" />
+                      Deu "Acesso bloqueado / Erro 403: access_denied"?
                     </p>
-                    <p className="text-neutral-400 leading-relaxed">
-                      Como o aplicativo é de uso pessoal e conecta diretamente à planilha de vocês no Google Drive, o Google exibe uma tela amarela de aviso padrão. Basta clicar no link cinza pequeno <strong>"Avançado"</strong> (no canto inferior esquerdo) e depois em <strong>"Acessar Orçamento Londrina (não seguro)"</strong>. Marque as permissões e confirme.
+                    <p className="text-neutral-300 leading-relaxed">
+                      Como o app está em <strong>fase de testes</strong> no Google, o Google bloqueia contas não autorizadas e <em>não</em> mostra o botão "Avançado".
                     </p>
+                    <div className="pt-1 space-y-1 text-neutral-300">
+                      <p className="font-semibold text-emerald-400">
+                        👉 Solução mais rápida (sem mexer em configurações):
+                      </p>
+                      <p className="text-neutral-300">
+                        No celular da esposa, ao clicar em <strong>"Entrar com o Google"</strong>, ela pode selecionar ou digitar <strong>a conta Google do marido (a conta principal)</strong>. O Google aprova na hora! Ao lançar gastos, ela continua escolhendo normalmente <em>"Esposa"</em> ou o nome dela no campo de quem gastou.
+                      </p>
+                      <p className="font-semibold text-sky-400 pt-1">
+                        👉 Ou para autorizar o e-mail pessoal dela:
+                      </p>
+                      <p className="text-neutral-300">
+                        O marido precisa acessar o <em>Google Cloud Console &gt; Tela de consentimento OAuth &gt; Usuários de teste</em>, clicar em <strong>Adicionar Usuários</strong> e colocar o e-mail dela.
+                      </p>
+                    </div>
                   </div>
 
                   <div className="p-2 rounded-lg bg-neutral-950/60 border border-neutral-800 space-y-1">
                     <p className="font-bold text-sky-300 flex items-center gap-1">
                       <Smartphone className="h-3.5 w-3.5 text-sky-400" />
-                      2. Abra no Chrome ou Safari (não dentro do WhatsApp):
+                      Abra no Chrome ou Safari (não dentro do WhatsApp):
                     </p>
                     <p className="text-neutral-400 leading-relaxed">
-                      Se você tocou no link pelo WhatsApp, o navegador do WhatsApp bloqueia logins do Google (erro <em>disallowed_useragent</em>). Toque nos 3 pontinhos ⋮ no topo e escolha <strong>"Abrir no Chrome"</strong> ou <strong>"Abrir no Safari"</strong>.
+                      Se abriu pelo WhatsApp, o navegador do WhatsApp bloqueia logins do Google. Toque nos 3 pontinhos ⋮ no topo e escolha <strong>"Abrir no Chrome"</strong> ou <strong>"Abrir no Safari"</strong>.
                     </p>
                   </div>
 
                   <div className="p-2 rounded-lg bg-neutral-950/60 border border-neutral-800 space-y-1">
-                    <p className="font-bold text-emerald-300 flex items-center gap-1">
-                      <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />
-                      3. Conectar a mesma planilha:
+                    <p className="font-bold text-amber-300 flex items-center gap-1">
+                      <CheckCheck className="h-3.5 w-3.5 text-amber-400" />
+                      Compartilhar a planilha no Google Sheets:
                     </p>
                     <p className="text-neutral-400 leading-relaxed">
-                      Se a esposa for entrar com o próprio Gmail dela, o marido deve compartilhar a planilha no Google Sheets com ela dando permissão de <strong>Editor</strong>. Ou ela pode simplesmente entrar com a conta Google principal do casal.
+                      Se ela usar o e-mail dela, certifique-se de que a planilha no Google Sheets foi compartilhada com ela com permissão de <strong>Editor</strong>.
                     </p>
                   </div>
                 </div>
@@ -563,17 +578,32 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
               <div className="space-y-3">
                 <div className="rounded-xl border border-emerald-600/30 bg-emerald-950/20 p-3.5 space-y-2">
                   <div className="flex items-start justify-between">
-                    <div>
+                    <div className="flex-1 pr-2 min-w-0">
                       <p className="text-xs font-bold text-white">{planilha.nome}</p>
-                      <p className="text-[10px] text-neutral-400 mt-0.5">
-                        ID: <span className="font-mono text-neutral-500">{planilha.id.substring(0, 16)}...</span>
-                      </p>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="text-[10px] text-neutral-400">ID da Planilha:</span>
+                        <code className="text-[10px] text-emerald-400 font-mono bg-neutral-900 px-1.5 py-0.5 rounded border border-neutral-800 break-all">
+                          {planilha.id}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(planilha.id);
+                            setMensagemSucesso('ID da planilha copiado!');
+                            setTimeout(() => setMensagemSucesso(null), 2500);
+                          }}
+                          className="text-neutral-400 hover:text-white p-1"
+                          title="Copiar ID da Planilha"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </button>
+                      </div>
                     </div>
                     <a
                       href={planilha.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-600/40 px-2.5 py-1 text-xs font-semibold text-emerald-300 transition-colors"
+                      className="shrink-0 flex items-center gap-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-600/40 px-2.5 py-1 text-xs font-semibold text-emerald-300 transition-colors"
                     >
                       <span>Abrir no Sheets</span>
                       <ExternalLink className="h-3.5 w-3.5" />
@@ -584,6 +614,23 @@ export const GoogleSheetsConnectView: React.FC<Props> = ({ appState, setAppState
                     <span>Lançamentos locais: <strong className="text-white">{appState.lancamentos.length}</strong></span>
                     <span>Última sincronização: <strong className="text-neutral-300">{planilha.ultimaSincronizacao || 'agora'}</strong></span>
                   </div>
+                </div>
+
+                {/* Card de Alinhamento do Casal: Como verem os gastos juntos */}
+                <div className="rounded-xl border border-sky-500/30 bg-sky-950/30 p-3 text-xs text-neutral-300 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-sky-400 shrink-0" />
+                    <strong className="text-sky-300 font-bold">Como você e sua esposa veem os gastos juntos:</strong>
+                  </div>
+                  <p className="text-[11px] text-neutral-300 leading-relaxed">
+                    <strong>1. Mesma planilha:</strong> Os dois aparelhos devem usar o mesmo ID de planilha acima. Se ela lançou R$ 59 e você não viu, compare se o ID no celular dela é idêntico a este.
+                  </p>
+                  <p className="text-[11px] text-neutral-300 leading-relaxed">
+                    <strong>2. Atualização automática:</strong> O app agora atualiza sozinho a cada 20 segundos e sempre que você abrir a tela ou tocar no botão <em>"Sheets"</em> no topo.
+                  </p>
+                  <p className="text-[11px] text-neutral-300 leading-relaxed">
+                    <strong>3. Soma conjunta:</strong> Toda despesa (lançada por Ele ou por Ela) abate do teto da categoria e soma no total de gastos da família.
+                  </p>
                 </div>
 
                 {/* Aviso de Sincronização Automática */}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { carregarEstadoInicial, salvarEstado, AppState } from './services/storage';
 import { LancamentoRapido } from './components/LancamentoRapido';
 import { PainelDoMes } from './components/PainelDoMes';
@@ -16,7 +16,9 @@ import {
   X,
   Calendar,
   CloudCheck,
-  RefreshCw
+  RefreshCw,
+  ShieldAlert,
+  Users
 } from 'lucide-react';
 import {
   obterPlanilhaConectada,
@@ -25,7 +27,7 @@ import {
   puxarDadosCompletosDaPlanilha,
   buscarPlanilhaNoDrive
 } from './services/googleSheets';
-import { initAuth } from './services/googleAuth';
+import { initAuth, isTokenExpirado, renovarTokenGoogle } from './services/googleAuth';
 
 type AbaAtiva = 'lancamento' | 'painel' | 'conselheiro' | 'simulador' | 'testes';
 
@@ -36,8 +38,87 @@ export default function App() {
   const [sincronizandoNuvem, setSincronizandoNuvem] = useState<boolean>(false);
   const [statusSincronizacao, setStatusSincronizacao] = useState<'ocioso' | 'sincronizando' | 'sincronizado'>('ocioso');
   const [isInAppBrowser, setIsInAppBrowser] = useState<boolean>(false);
+  const [sessaoGoogleExpirada, setSessaoGoogleExpirada] = useState<boolean>(false);
+  const [notificacaoSincronizacao, setNotificacaoSincronizacao] = useState<string | null>(null);
+  const [ultimaSincronizacao, setUltimaSincronizacao] = useState<string | null>(() => {
+    return localStorage.getItem('orcamento_londrina_last_sync') || null;
+  });
 
-  // 1. Detectar parâmetro de URL (?planilha=ID ou ?sheet=ID) para conexão instantânea entre o casal
+  // Função central de sincronização contínua com a planilha do casal
+  const sincronizarComPlanilha = useCallback(
+    async (silencioso = true, avisarSeNovo = true) => {
+      let planilha = obterPlanilhaConectada();
+      if (!planilha) {
+        planilha = await buscarPlanilhaNoDrive();
+      }
+      if (!planilha) return;
+
+      if (isTokenExpirado()) {
+        setSessaoGoogleExpirada(true);
+        return;
+      }
+
+      setSincronizandoNuvem(true);
+      setStatusSincronizacao('sincronizando');
+
+      try {
+        const resultado = await puxarDadosCompletosDaPlanilha(planilha.id);
+        const horaAtual = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        setUltimaSincronizacao(horaAtual);
+        setSessaoGoogleExpirada(false);
+        setStatusSincronizacao('sincronizado');
+
+        setAppState(prev => {
+          // Detectar lançamentos novos do cônjuge
+          if (avisarSeNovo && resultado.lancamentos.length > prev.lancamentos.length) {
+            const diferenca = resultado.lancamentos.length - prev.lancamentos.length;
+            const novoDaEsposa = resultado.lancamentos.find(
+              l => l.quem === 'Ela' && !prev.lancamentos.some(pl => pl.id === l.id)
+            );
+            if (novoDaEsposa) {
+              setNotificacaoSincronizacao(
+                `✨ Novo gasto da esposa sincronizado: ${formatarMoeda(novoDaEsposa.valor)} (${novoDaEsposa.categoria})`
+              );
+            } else {
+              setNotificacaoSincronizacao(
+                `✨ ${diferenca} novo(s) gasto(s) sincronizado(s) da planilha do casal!`
+              );
+            }
+            setTimeout(() => setNotificacaoSincronizacao(null), 5000);
+          } else if (!silencioso) {
+            setNotificacaoSincronizacao(
+              `✨ Tudo atualizado com o Sheets! (${resultado.lancamentos.length} gastos compartilhados)`
+            );
+            setTimeout(() => setNotificacaoSincronizacao(null), 3500);
+          }
+
+          const atualizado: AppState = {
+            ...prev,
+            lancamentos: resultado.lancamentos,
+            rendasExtras: resultado.rendasExtras,
+            fixas: resultado.fixas.length > 0 ? resultado.fixas : prev.fixas,
+            orcamento: resultado.orcamento && resultado.orcamento.length > 0 ? resultado.orcamento : prev.orcamento,
+            reserva: resultado.reserva && resultado.reserva.length > 0 ? resultado.reserva : prev.reserva
+          };
+          salvarEstado(atualizado);
+          return atualizado;
+        });
+      } catch (err: any) {
+        if (err.message?.includes('expirou') || isTokenExpirado()) {
+          setSessaoGoogleExpirada(true);
+        }
+        if (!silencioso) {
+          setNotificacaoSincronizacao(err.message || 'Erro ao sincronizar com a planilha.');
+          setTimeout(() => setNotificacaoSincronizacao(null), 4000);
+        }
+      } finally {
+        setSincronizandoNuvem(false);
+      }
+    },
+    []
+  );
+
+  // 1. Detectar parâmetro de URL (?planilha=ID ou ?sheet=ID) para conexão instantânea da esposa
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -47,12 +128,16 @@ export default function App() {
         if (idLimpo) {
           salvarPlanilhaConectada(idLimpo, 'Orçamento Doméstico Londrina (Casal)');
           console.log('Planilha vinculada via link compartilhado:', idLimpo);
+          setNotificacaoSincronizacao('🔗 Conectado à planilha do casal! Sincronizando dados compartilhados...');
+          sincronizarComPlanilha(false, false);
+          // Limpa URL
+          window.history.replaceState({}, '', window.location.pathname);
         }
       }
     } catch (e) {
       console.warn('Erro ao processar parâmetros da URL:', e);
     }
-  }, []);
+  }, [sincronizarComPlanilha]);
 
   // 2. Detectar se foi aberto dentro do navegador embutido do WhatsApp ou Instagram
   useEffect(() => {
@@ -66,51 +151,78 @@ export default function App() {
     }
   }, []);
 
-  // SINCRONIZAÇÃO AUTOMÁTICA EM SEGUNDO PLANO:
-  // Ao abrir o app ou ao conectar a conta Google, busca a planilha e popula automaticamente
+  // 3. SINCRONIZAÇÃO AUTOMÁTICA INICIAL E AUTH LISTENER
   useEffect(() => {
     let cancelado = false;
     const unsub = initAuth(async () => {
       if (cancelado) return;
-      let planilha = obterPlanilhaConectada();
-      if (!planilha) {
-        planilha = await buscarPlanilhaNoDrive();
-      }
-      if (planilha && !cancelado) {
-        setSincronizandoNuvem(true);
-        setStatusSincronizacao('sincronizando');
-        try {
-          const resultado = await puxarDadosCompletosDaPlanilha(planilha.id);
-          if (!cancelado) {
-            setAppState(prev => {
-              const atualizado: AppState = {
-                ...prev,
-                lancamentos: resultado.lancamentos,
-                rendasExtras: resultado.rendasExtras,
-                fixas: resultado.fixas.length > 0 ? resultado.fixas : prev.fixas,
-                orcamento: resultado.orcamento && resultado.orcamento.length > 0 ? resultado.orcamento : prev.orcamento,
-                reserva: resultado.reserva && resultado.reserva.length > 0 ? resultado.reserva : prev.reserva
-              };
-              salvarEstado(atualizado);
-              return atualizado;
-            });
-            setStatusSincronizacao('sincronizado');
-          }
-        } catch (err) {
-          console.warn('Sincronização em background finalizada com aviso:', err);
-        } finally {
-          if (!cancelado) {
-            setSincronizandoNuvem(false);
-          }
-        }
-      }
+      sincronizarComPlanilha(true, true);
     });
 
     return () => {
       cancelado = true;
       unsub();
     };
-  }, []);
+  }, [sincronizarComPlanilha]);
+
+  // 4. POLLING AUTOMÁTICO A CADA 20 SEGUNDOS (sincroniza despesas do cônjuge em tempo real)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        sincronizarComPlanilha(true, true);
+      }
+    }, 20000);
+
+    return () => clearInterval(timer);
+  }, [sincronizarComPlanilha]);
+
+  // 5. SINCRONIZAR AO RETORNAR PARA O APP (troca de aba, destravar celular, foco da janela)
+  useEffect(() => {
+    const handleVisibilidade = () => {
+      if (document.visibilityState === 'visible') {
+        sincronizarComPlanilha(true, true);
+      }
+    };
+    const handleFoco = () => {
+      sincronizarComPlanilha(true, true);
+    };
+    const handleSyncAtualizado = () => {
+      sincronizarComPlanilha(true, false);
+    };
+    const handleExpirou = () => {
+      setSessaoGoogleExpirada(true);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilidade);
+    window.addEventListener('focus', handleFoco);
+    window.addEventListener('orcamento-sync-updated', handleSyncAtualizado);
+    window.addEventListener('orcamento-google-sessao-expirada', handleExpirou);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilidade);
+      window.removeEventListener('focus', handleFoco);
+      window.removeEventListener('orcamento-sync-updated', handleSyncAtualizado);
+      window.removeEventListener('orcamento-google-sessao-expirada', handleExpirou);
+    };
+  }, [sincronizarComPlanilha]);
+
+  // 6. SINCRONIZAR AO TROCAR DE ABA (ex: ir para o Painel)
+  useEffect(() => {
+    sincronizarComPlanilha(true, false);
+  }, [abaAtiva, sincronizarComPlanilha]);
+
+  const handleRenovarSessao = async () => {
+    try {
+      setSincronizandoNuvem(true);
+      await renovarTokenGoogle();
+      setSessaoGoogleExpirada(false);
+      await sincronizarComPlanilha(false, true);
+    } catch (e: any) {
+      console.warn('Renovação de sessão:', e);
+    } finally {
+      setSincronizandoNuvem(false);
+    }
+  };
 
   const agora = new Date();
   const diaAtual = appState.diaAtualSimulado || agora.getDate();
@@ -179,30 +291,73 @@ export default function App() {
           </div>
         )}
 
+        {/* Notificação Flutuante de Sincronização / Novos Gastos do Cônjuge */}
+        {notificacaoSincronizacao && (
+          <div className="mt-2 p-2.5 rounded-xl bg-emerald-950/95 border border-emerald-500/80 text-xs text-emerald-200 flex items-center justify-between shadow-xl shadow-emerald-950/60 animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-emerald-400 shrink-0" />
+              <span className="font-semibold">{notificacaoSincronizacao}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setNotificacaoSincronizacao(null)}
+              className="text-emerald-400 hover:text-white p-1"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Alerta de Sessão do Google Expirada com 1-Click Refresh */}
+        {sessaoGoogleExpirada && (
+          <div className="mt-2 p-2.5 rounded-xl bg-amber-950/90 border border-amber-700/80 flex items-center justify-between text-xs text-amber-200 animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" />
+              <span className="text-[11px] leading-tight">Sessão Google expirada. Renove para sincronizar com a esposa.</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleRenovarSessao}
+              disabled={sincronizandoNuvem}
+              className="shrink-0 ml-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-neutral-950 font-bold px-2.5 py-1 text-[11px] transition-all active:scale-95 disabled:opacity-50"
+            >
+              {sincronizandoNuvem ? 'Conectando...' : 'Renovar'}
+            </button>
+          </div>
+        )}
+
         {/* Barra Superior do App */}
         <header className="pt-4 pb-2 border-b border-neutral-800/80 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-base font-extrabold tracking-tight text-white flex items-center gap-1.5">
                 <span>Orçamento Londrina</span>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full border border-neutral-700 bg-neutral-900 text-neutral-400">
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full border border-sky-800 bg-sky-950/80 text-sky-300 flex items-center gap-1">
+                  <Users className="h-2.5 w-2.5" />
                   Casal
                 </span>
               </h1>
               {obterPlanilhaConectada() ? (
-                <button
-                  type="button"
-                  onClick={() => setAbaAtiva('testes')}
-                  className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 bg-emerald-950/70 border border-emerald-800/80 px-2 py-0.5 rounded-full hover:bg-emerald-900/50 transition-colors"
-                  title="Planilha Google Sheets conectada e sincronizada"
-                >
-                  {sincronizandoNuvem ? (
-                    <RefreshCw className="h-2.5 w-2.5 animate-spin text-emerald-400" />
-                  ) : (
-                    <CloudCheck className="h-3 w-3 text-emerald-400" />
-                  )}
-                  <span>{sincronizandoNuvem ? 'Sincronizando...' : 'Sheets'}</span>
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => sincronizarComPlanilha(false, true)}
+                    disabled={sincronizandoNuvem}
+                    className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded-full hover:bg-emerald-900/60 transition-all active:scale-95 disabled:opacity-50"
+                    title="Toque para atualizar agora com a planilha do casal"
+                  >
+                    <RefreshCw className={`h-2.5 w-2.5 text-emerald-400 ${sincronizandoNuvem ? 'animate-spin' : ''}`} />
+                    <span>{sincronizandoNuvem ? 'Atualizando...' : (ultimaSincronizacao ? `Sheets ${ultimaSincronizacao}` : 'Sheets')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAbaAtiva('testes')}
+                    className="text-neutral-400 hover:text-emerald-400 p-0.5"
+                    title="Configurações e Compartilhamento com a Esposa"
+                  >
+                    <CloudCheck className="h-3.5 w-3.5 text-emerald-400" />
+                  </button>
+                </div>
               ) : (
                 <button
                   type="button"
