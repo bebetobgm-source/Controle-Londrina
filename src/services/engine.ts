@@ -404,6 +404,9 @@ export interface ProjecaoDetalhada {
   deficitAjustada: number;
   totalRendasExtras: number;
   rendaTotal: number;
+  gastoVariavelAteAgora: number;
+  projecaoVariavelLinear: number;
+  saldoRestanteAtual: number;
 }
 
 export function calcularProjecaoFechamento(
@@ -420,37 +423,48 @@ export function calcularProjecaoFechamento(
   const totalDiasMes = totalDiasParam !== undefined ? totalDiasParam : obterTotalDiasNoMes(agora.getFullYear(), agora.getMonth() + 1);
   const mesRefAtual = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
 
-  const gastoTotalAteAgora = lancamentos.reduce((acc, l) => acc + l.valor, 0);
+  const gastoVariavelAteAgora = lancamentos.reduce((acc, l) => acc + l.valor, 0);
   const diasDecorridos = Math.max(1, diaAtual);
 
-  // Projeção Linear Simples: gasto_atual / dias_decorridos * dias_do_mes
-  const projecaoLinear = (gastoTotalAteAgora / diasDecorridos) * totalDiasMes;
+  // 1. Contas Fixas Totais do Mês
+  const fixasTotal = fixas.filter(f => f.ativo === 'S').reduce((acc, f) => acc + f.valor, 0);
+  const fixasPagas = fixas.filter(f => f.ativo === 'S' && f.pago_mes_ref === mesRefAtual).reduce((acc, f) => acc + f.valor, 0);
+  const fixasAVencer = fixasTotal - fixasPagas;
 
-  // Projeção Ajustada (mais honesta):
-  // Separa os gastos concentrados no começo do mês (compra grande de mercado e fixas pagas)
-  // e projeta apenas o gasto difuso diário, somando as fixas ainda a vencer.
+  // 2. Renda Total (Base Líquida + Rendas Extras do Mês)
+  const totalRendasExtras = (rendasExtrasParam || [])
+    .filter(r => r.mes_ref === mesRefAtual)
+    .reduce((acc, r) => acc + r.valor, 0);
+  const rendaTotal = config.renda_liquida_mensal + totalRendasExtras;
+
+  // 3. Projeção Linear Simples:
+  // Os lançamentos representam os gastos variáveis.
+  // Gasto Variável Projetado = (gasto_variavel_ate_agora / dias_decorridos) * total_dias_mes
+  // Gasto Total do Mês = Contas Fixas Totais + Gasto Variável Projetado
+  const projecaoVariavelLinear = (gastoVariavelAteAgora / diasDecorridos) * totalDiasMes;
+  const projecaoLinear = fixasTotal + projecaoVariavelLinear;
+
+  // 4. Projeção Ajustada (mais realista e honesta):
+  // Separa compras atípicas/concentradas (como a compra grande do mês no mercado, que não se repete diariamente)
+  // e projeta no tempo apenas o gasto difuso diário.
   const comprasMercado = lancamentos.filter(l => l.categoria === 'Mercado');
   const maiorCompraMercado = comprasMercado.length > 0
     ? Math.max(...comprasMercado.map(c => c.valor))
     : 0;
 
-  const fixasTotal = fixas.filter(f => f.ativo === 'S').reduce((acc, f) => acc + f.valor, 0);
-  const fixasPagas = fixas.filter(f => f.ativo === 'S' && f.pago_mes_ref === mesRefAtual).reduce((acc, f) => acc + f.valor, 0);
-  const fixasAVencer = fixasTotal - fixasPagas;
+  // Gasto difuso do dia a dia (excluindo a compra atípica de mercado)
+  const gastoDifusoAteAgora = Math.max(0, gastoVariavelAteAgora - maiorCompraMercado);
+  const projecaoDifuso = (gastoDifusoAteAgora / diasDecorridos) * totalDiasMes;
 
-  // Lançamentos que já contam como fixas pagas ou compra grande
-  const gastoDifuso = Math.max(0, gastoTotalAteAgora - fixasPagas - maiorCompraMercado);
-  const projecaoDifuso = (gastoDifuso / diasDecorridos) * totalDiasMes;
+  // Gasto Total Ajustado = Contas Fixas + Compra Atípica + Variáveis Difusos Projetados
+  const projecaoAjustada = fixasTotal + maiorCompraMercado + projecaoDifuso;
 
-  const projecaoAjustada = maiorCompraMercado + fixasTotal + projecaoDifuso;
+  // Sobras e Déficits reais em relação à Renda Total
+  const sobraLinear = rendaTotal - projecaoLinear;
+  const sobraAjustada = rendaTotal - projecaoAjustada;
 
-  const totalRendasExtras = (rendasExtrasParam || [])
-    .filter(r => r.mes_ref === mesRefAtual)
-    .reduce((acc, r) => acc + r.valor, 0);
-
-  const renda = config.renda_liquida_mensal + totalRendasExtras;
-  const sobraLinear = renda - projecaoLinear;
-  const sobraAjustada = renda - projecaoAjustada;
+  // Saldo restante real da renda HOJE (Renda - Contas Fixas - Variáveis já gastos até o momento)
+  const saldoRestanteAtual = rendaTotal - (fixasTotal + gastoVariavelAteAgora);
 
   return {
     projecaoLinear,
@@ -458,13 +472,16 @@ export function calcularProjecaoFechamento(
     fixasTotal,
     fixasAVencer,
     compraGrandeMercado: maiorCompraMercado,
-    gastoDifusoAteAgora: gastoDifuso,
+    gastoDifusoAteAgora,
     sobraLinear,
     sobraAjustada,
     deficitLinear: sobraLinear < 0 ? Math.abs(sobraLinear) : 0,
     deficitAjustada: sobraAjustada < 0 ? Math.abs(sobraAjustada) : 0,
     totalRendasExtras,
-    rendaTotal: renda
+    rendaTotal,
+    gastoVariavelAteAgora,
+    projecaoVariavelLinear,
+    saldoRestanteAtual
   };
 }
 

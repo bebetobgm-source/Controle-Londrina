@@ -929,39 +929,65 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
         </div>
 
         {/* Projeção Ajustada em Destaque */}
-        <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-4">
+        <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-4 space-y-2.5">
           <div className="flex items-baseline justify-between">
-            <span className="text-xs text-neutral-400 font-medium">Projeção Ajustada (Destaque)</span>
+            <span className="text-xs text-neutral-300 font-bold">Gasto Total Projetado (Fixas + Variáveis)</span>
             <span className="font-mono text-lg font-extrabold text-white">
               {formatarMoeda(projecao.projecaoAjustada)}
             </span>
           </div>
-          <div className="mt-1 text-xs text-neutral-400">
-            Separa compras iniciais ({formatarMoeda(projecao.compraGrandeMercado)}) e fixas ({formatarMoeda(projecao.fixasTotal)}), projetando apenas o gasto diário difuso.
+
+          <div className="text-[11px] text-neutral-400 leading-relaxed bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/80 space-y-1">
+            <div className="flex justify-between text-neutral-300">
+              <span>• Contas Fixas do mês:</span>
+              <strong className="font-mono text-white">{formatarMoeda(projecao.fixasTotal)}</strong>
+            </div>
+            <div className="flex justify-between text-neutral-300">
+              <span>• Variáveis já gastos (até dia {diaAtual}):</span>
+              <strong className="font-mono text-white">{formatarMoeda(projecao.gastoVariavelAteAgora)}</strong>
+            </div>
+            <div className="flex justify-between text-neutral-400">
+              <span>• Variáveis futuros projetados:</span>
+              <span className="font-mono">{formatarMoeda(Math.max(0, projecao.projecaoAjustada - projecao.fixasTotal - projecao.gastoVariavelAteAgora))}</span>
+            </div>
           </div>
 
           {/* Composição da Renda se houver Renda Extra */}
           {totalRendasExtrasMes > 0 && (
-            <div className="mt-2 flex items-center justify-between text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 rounded-lg px-2.5 py-1">
+            <div className="flex items-center justify-between text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 rounded-lg px-2.5 py-1.5">
               <span>Renda base {formatarMoeda(appState.config.renda_liquida_mensal)} + Extra {formatarMoeda(totalRendasExtrasMes)}</span>
               <strong className="font-mono font-bold">= {formatarMoeda(projecao.rendaTotal)}</strong>
             </div>
           )}
 
-          <div className="mt-2.5 flex items-center justify-between border-t border-neutral-800/80 pt-2 text-xs">
-            <span>Resultado previsto:</span>
+          {/* Resultado Previsto no Fim do Mês */}
+          <div className="flex items-center justify-between border-t border-neutral-800/80 pt-2 text-xs">
+            <span className="font-medium text-neutral-300">Resultado final do mês:</span>
             {projecao.sobraAjustada >= 0 ? (
-              <span className="font-bold text-emerald-400">Sobra de {formatarMoeda(projecao.sobraAjustada)}</span>
+              <span className="font-bold text-emerald-400 font-mono">Sobra de {formatarMoeda(projecao.sobraAjustada)}</span>
             ) : (
-              <span className="font-bold text-rose-400">Déficit de {formatarMoeda(projecao.deficitAjustada)}</span>
+              <span className="font-bold text-rose-400 font-mono">Déficit de {formatarMoeda(projecao.deficitAjustada)}</span>
             )}
+          </div>
+
+          {/* Saldo Restante Hoje da Renda */}
+          <div className="flex items-center justify-between text-[11px] text-neutral-400 pt-1 border-t border-neutral-900">
+            <span>Saldo da renda ainda livre hoje:</span>
+            <span className={`font-mono font-bold ${projecao.saldoRestanteAtual >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {formatarMoeda(projecao.saldoRestanteAtual)}
+            </span>
           </div>
         </div>
 
-        {/* Projeção Linear (comparativa) */}
-        <div className="mt-2.5 flex items-center justify-between px-2 text-xs text-neutral-500">
+        {/* Projeção Linear (comparativa completa) */}
+        <div className="mt-2.5 flex items-center justify-between px-2 text-xs text-neutral-400">
           <span>Projeção Linear simples:</span>
-          <span className="font-mono">{formatarMoeda(projecao.projecaoLinear)} ({projecao.sobraLinear >= 0 ? `Sobra ${formatarMoeda(projecao.sobraLinear)}` : `Déficit ${formatarMoeda(projecao.deficitLinear)}`})</span>
+          <span className="font-mono text-neutral-300">
+            {formatarMoeda(projecao.projecaoLinear)}{' '}
+            <span className={projecao.sobraLinear >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+              ({projecao.sobraLinear >= 0 ? `Sobra ${formatarMoeda(projecao.sobraLinear)}` : `Déficit ${formatarMoeda(projecao.deficitLinear)}`})
+            </span>
+          </span>
         </div>
       </div>
 
