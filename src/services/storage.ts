@@ -343,6 +343,104 @@ export function atualizarTetoOrcamento(categoria: string, novoTeto: number, esta
   return novoEstado;
 }
 
+/**
+ * Registra um novo aporte ou retirada na Reserva / Colchão
+ */
+export function registrarAporteReserva(
+  dados: {
+    valor: number;
+    motivo: string;
+    tipo?: 'Aporte' | 'Retirada';
+    data?: string;
+  },
+  estadoAtual: AppState
+): { estadoAtualizado: AppState; novaTransacao: TransacaoReserva } {
+  const agora = new Date();
+  const dataHoje = dados.data || agora.toISOString().split('T')[0];
+  const tipo = dados.tipo || 'Aporte';
+  const valor = Math.abs(dados.valor);
+
+  const saldoAnterior = estadoAtual.reserva && estadoAtual.reserva.length > 0
+    ? estadoAtual.reserva[estadoAtual.reserva.length - 1].saldo_acumulado
+    : 2000;
+
+  const novoSaldo = tipo === 'Aporte' ? saldoAnterior + valor : Math.max(0, saldoAnterior - valor);
+
+  const novaTransacao: TransacaoReserva = {
+    id: `res-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    data: dataHoje,
+    valor,
+    tipo,
+    motivo: dados.motivo.trim() || (tipo === 'Aporte' ? 'Aporte na Reserva' : 'Retirada da Reserva'),
+    saldo_acumulado: novoSaldo
+  };
+
+  const novaReserva = [...(estadoAtual.reserva || []), novaTransacao];
+  const estadoAtualizado: AppState = {
+    ...estadoAtual,
+    reserva: novaReserva
+  };
+
+  salvarEstado(estadoAtualizado);
+  return { estadoAtualizado, novaTransacao };
+}
+
+/**
+ * Exclui um lançamento da reserva e recalcula o saldo acumulado
+ */
+export function excluirTransacaoReserva(id: string, estadoAtual: AppState): AppState {
+  const filtradas = (estadoAtual.reserva || []).filter(r => r.id !== id);
+  let saldo = 0;
+  const recalculadas = filtradas.map(r => {
+    saldo += r.tipo === 'Aporte' ? r.valor : -r.valor;
+    return { ...r, saldo_acumulado: Math.max(0, saldo) };
+  });
+
+  const novoEstado: AppState = {
+    ...estadoAtual,
+    reserva: recalculadas
+  };
+  salvarEstado(novoEstado);
+  return novoEstado;
+}
+
+/**
+ * Ajusta diretamente o saldo total do colchão (ex: dinheiro investido em outra conta / CDB D+30)
+ */
+export function ajustarSaldoColchao(
+  novoSaldoDesejado: number,
+  motivoAjuste: string,
+  estadoAtual: AppState
+): { estadoAtualizado: AppState; transacaoAjuste: TransacaoReserva } {
+  const agora = new Date();
+  const dataHoje = agora.toISOString().split('T')[0];
+  const saldoAnterior = estadoAtual.reserva && estadoAtual.reserva.length > 0
+    ? estadoAtual.reserva[estadoAtual.reserva.length - 1].saldo_acumulado
+    : 2000;
+
+  const diferenca = novoSaldoDesejado - saldoAnterior;
+  const tipo = diferenca >= 0 ? 'Aporte' : 'Retirada';
+  const valorAbs = Math.abs(diferenca);
+
+  const transacaoAjuste: TransacaoReserva = {
+    id: `res-ajuste-${Date.now()}`,
+    data: dataHoje,
+    valor: valorAbs,
+    tipo,
+    motivo: motivoAjuste.trim() || 'Ajuste de Saldo do Colchão',
+    saldo_acumulado: novoSaldoDesejado
+  };
+
+  const novaReserva = [...(estadoAtual.reserva || []), transacaoAjuste];
+  const estadoAtualizado: AppState = {
+    ...estadoAtual,
+    reserva: novaReserva
+  };
+
+  salvarEstado(estadoAtualizado);
+  return { estadoAtualizado, transacaoAjuste };
+}
+
 export function resetarParaDadosPadrao(): AppState {
   const estado: AppState = {
     lancamentos: [...LANCAMENTOS_INICIAIS],

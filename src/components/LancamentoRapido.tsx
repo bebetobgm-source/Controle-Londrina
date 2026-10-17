@@ -6,16 +6,20 @@ import {
   registrarLancamento,
   excluirLancamento,
   registrarRendaExtra,
-  excluirRendaExtra
+  excluirRendaExtra,
+  registrarAporteReserva,
+  excluirTransacaoReserva
 } from '../services/storage';
 import { ESTABELECIMENTOS_SUGERIDOS, CATEGORIAS_RENDA_EXTRA, SUGESTOES_RENDA_EXTRA } from '../data/defaultData';
 import {
   obterPlanilhaConectada,
   anexarLancamentoNaPlanilha,
   anexarRendaExtraNaPlanilha,
+  anexarTransacaoReservaNaPlanilha,
+  sincronizarReservaNaPlanilha,
   sincronizarTudoSemDuplicar
 } from '../services/googleSheets';
-import { Undo2, CheckCircle2, Store, Calendar, ArrowRight, CloudCheck, Coins, TrendingUp } from 'lucide-react';
+import { Undo2, CheckCircle2, Store, Calendar, ArrowRight, CloudCheck, Coins, TrendingUp, ShieldCheck } from 'lucide-react';
 
 interface Props {
   appState: AppState;
@@ -23,9 +27,17 @@ interface Props {
   onAcessarPainel: () => void;
 }
 
+const SUGESTOES_COLCHAO = [
+  'Dinheiro investido em outra conta (CDB D+30)',
+  'Aporte mensal da economia do casal',
+  'Aplicação financeira / Tesouro',
+  'Reserva de emergência guardada',
+  'Ajuste de saldo existente'
+];
+
 export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAcessarPainel }) => {
-  // Tipo: Despesa vs Renda Extra
-  const [tipoLancamento, setTipoLancamento] = useState<'despesa' | 'renda_extra'>('despesa');
+  // Tipo: Despesa vs Renda Extra vs Colchão
+  const [tipoLancamento, setTipoLancamento] = useState<'despesa' | 'renda_extra' | 'colchao'>('despesa');
 
   // Estado do teclado numérico em centavos
   const [centavos, setCentavos] = useState<number>(0);
@@ -74,10 +86,13 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
   const [rendaCategoria, setRendaCategoria] = useState<string>(CATEGORIAS_RENDA_EXTRA[0].nome);
   const [rendaFormaRecebimento, setRendaFormaRecebimento] = useState<string>('Pix');
 
+  // Campos específicos de Colchão / Reserva
+  const [colchaoMotivo, setColchaoMotivo] = useState<string>('Dinheiro investido em outra conta (CDB D+30)');
+
   // Feedback imediato e Desfazer
   const [feedbackImpacto, setFeedbackImpacto] = useState<string | null>(null);
   const [ultimoLancamentoId, setUltimoLancamentoId] = useState<string | null>(null);
-  const [ultimoTipoLancado, setUltimoTipoLancado] = useState<'despesa' | 'renda_extra'>('despesa');
+  const [ultimoTipoLancado, setUltimoTipoLancado] = useState<'despesa' | 'renda_extra' | 'colchao'>('despesa');
   const [tempoDesfazer, setTempoDesfazer] = useState<number>(10);
   const [alertaRecente, setAlertaRecente] = useState<AlertaLog | null>(null);
 
@@ -110,9 +125,43 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
     }
   };
 
-  // Salvar gasto ou renda extra
+  // Salvar gasto, renda extra ou aporte no colchão
   const handleSalvar = () => {
     if (valorFinal <= 0) return;
+
+    if (tipoLancamento === 'colchao') {
+      const motivoFinal = colchaoMotivo.trim() || 'Aporte na Reserva';
+      const { estadoAtualizado, novaTransacao } = registrarAporteReserva(
+        {
+          valor: valorFinal,
+          motivo: motivoFinal,
+          tipo: 'Aporte',
+          data: dataGasto
+        },
+        appState
+      );
+      setAppState(estadoAtualizado);
+      setUltimoLancamentoId(novaTransacao.id);
+      setUltimoTipoLancado('colchao');
+
+      const planilhaConectada = obterPlanilhaConectada();
+      if (planilhaConectada) {
+        anexarTransacaoReservaNaPlanilha(planilhaConectada.id, novaTransacao);
+      }
+
+      const novoSaldo = novaTransacao.saldo_acumulado;
+      const metaColchao = appState.config.colchao_meta || 4600;
+      const pct = Math.min(100, Math.round((novoSaldo / metaColchao) * 100));
+
+      setFeedbackImpacto(
+        `🛡️ Aporte de ${formatarMoeda(valorFinal)} adicionado ao Colchão com sucesso! Novo saldo: ${formatarMoeda(novoSaldo)} (${pct}% da meta).`
+      );
+      setAlertaRecente(null);
+      setCentavos(0);
+      setColchaoMotivo('Dinheiro investido em outra conta (CDB D+30)');
+      setTempoDesfazer(10);
+      return;
+    }
 
     if (tipoLancamento === 'renda_extra') {
       const novaRenda = {
@@ -227,18 +276,32 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
     if (ultimoTipoLancado === 'renda_extra') {
       estadoRestaurado = excluirRendaExtra(ultimoLancamentoId, appState);
       setAppState(estadoRestaurado);
+      const planilhaConectada = obterPlanilhaConectada();
+      if (planilhaConectada) {
+        sincronizarTudoSemDuplicar(
+          planilhaConectada.id,
+          estadoRestaurado.lancamentos,
+          estadoRestaurado.rendasExtras
+        );
+      }
+    } else if (ultimoTipoLancado === 'colchao') {
+      estadoRestaurado = excluirTransacaoReserva(ultimoLancamentoId, appState);
+      setAppState(estadoRestaurado);
+      const planilhaConectada = obterPlanilhaConectada();
+      if (planilhaConectada) {
+        sincronizarReservaNaPlanilha(planilhaConectada.id, estadoRestaurado.reserva);
+      }
     } else {
       estadoRestaurado = excluirLancamento(ultimoLancamentoId, appState);
       setAppState(estadoRestaurado);
-    }
-
-    const planilhaConectada = obterPlanilhaConectada();
-    if (planilhaConectada) {
-      sincronizarTudoSemDuplicar(
-        planilhaConectada.id,
-        estadoRestaurado.lancamentos,
-        estadoRestaurado.rendasExtras
-      );
+      const planilhaConectada = obterPlanilhaConectada();
+      if (planilhaConectada) {
+        sincronizarTudoSemDuplicar(
+          planilhaConectada.id,
+          estadoRestaurado.lancamentos,
+          estadoRestaurado.rendasExtras
+        );
+      }
     }
 
     setUltimoLancamentoId(null);
@@ -277,8 +340,8 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
         </div>
       )}
 
-      {/* Seletor Tipo: Despesa vs Renda Extra */}
-      <div className="mb-3 grid grid-cols-2 gap-2 bg-neutral-900 p-1 rounded-xl border border-neutral-800">
+      {/* Seletor Tipo: Despesa vs Renda Extra vs Colchão */}
+      <div className="mb-3 grid grid-cols-3 gap-1.5 bg-neutral-900 p-1 rounded-xl border border-neutral-800">
         <button
           type="button"
           onClick={() => setTipoLancamento('despesa')}
@@ -289,7 +352,7 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
           }`}
         >
           <span className="h-2 w-2 rounded-full bg-rose-400" />
-          <span>Gasto / Despesa</span>
+          <span>Gasto</span>
         </button>
         <button
           type="button"
@@ -301,23 +364,43 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
           }`}
         >
           <Coins className="h-3.5 w-3.5 text-emerald-400" />
-          <span>Renda Extra (+ Entrada)</span>
+          <span>Renda Extra</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTipoLancamento('colchao')}
+          className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-bold transition-all ${
+            tipoLancamento === 'colchao'
+              ? 'bg-sky-500/20 text-sky-400 border border-sky-500/40 shadow-md font-extrabold'
+              : 'text-neutral-400 hover:text-sky-400'
+          }`}
+        >
+          <ShieldCheck className="h-3.5 w-3.5 text-sky-400" />
+          <span>Colchão</span>
         </button>
       </div>
 
       {/* Display do Valor Gigante */}
       <div id="display-valor-container" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 text-center shadow-lg backdrop-blur">
         <span className="text-[11px] font-bold tracking-wider text-neutral-400 uppercase">
-          {tipoLancamento === 'despesa' ? 'Valor do Gasto' : 'Valor da Renda Extra (Entrada)'}
+          {tipoLancamento === 'despesa'
+            ? 'Valor do Gasto'
+            : tipoLancamento === 'renda_extra'
+            ? 'Valor da Renda Extra (Entrada)'
+            : 'Valor para o Colchão / Reserva'}
         </span>
         <div id="display-valor-texto" className={`mt-1 text-4xl font-extrabold tracking-tight sm:text-5xl font-mono ${
-          tipoLancamento === 'despesa' ? 'text-white' : 'text-emerald-400'
+          tipoLancamento === 'despesa'
+            ? 'text-white'
+            : tipoLancamento === 'renda_extra'
+            ? 'text-emerald-400'
+            : 'text-sky-400'
         }`}>
-          {tipoLancamento === 'renda_extra' && valorFinal > 0 ? '+ ' : ''}{formatarMoeda(valorFinal)}
+          {tipoLancamento !== 'despesa' && valorFinal > 0 ? '+ ' : ''}{formatarMoeda(valorFinal)}
         </div>
       </div>
 
-      {/* Teclado Numérico Integrado (garante < 10 segundos e 4 toques em qualquer smartphone) */}
+      {/* Teclado Numérico Integrado */}
       <div id="teclado-numerico-grid" className="mt-3 grid grid-cols-3 gap-2">
         {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', 'DEL'].map(key => (
           <button
@@ -338,7 +421,81 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
         ))}
       </div>
 
-      {tipoLancamento === 'renda_extra' ? (
+      {tipoLancamento === 'colchao' ? (
+        /* CONTEÚDO ESPECÍFICO DE COLCHÃO / RESERVA */
+        <div className="mt-4 space-y-4 animate-in fade-in">
+          <div className="rounded-xl border border-sky-500/30 bg-sky-950/30 p-3 text-xs text-sky-200 flex items-start gap-2.5">
+            <ShieldCheck className="h-4 w-4 text-sky-400 shrink-0 mt-0.5" />
+            <div className="leading-relaxed">
+              <span className="font-bold text-sky-100">Lançamento Exclusivo do Colchão:</span> Este valor não é gasto variável nem conta fixa. Ele entra diretamente na sua <strong>Reserva de Emergência</strong> (aba <em>Metas</em> da planilha), aumentando seu saldo de segurança familiar.
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold tracking-wider text-neutral-400 uppercase block mb-1">
+              Origem / Motivo do Dinheiro
+            </label>
+            <input
+              type="text"
+              placeholder="Ex: Dinheiro investido em outra conta (CDB D+30)..."
+              value={colchaoMotivo}
+              onChange={e => setColchaoMotivo(e.target.value)}
+              className="w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-500 focus:border-sky-500 focus:outline-none"
+            />
+            {/* Chips rápidos */}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {SUGESTOES_COLCHAO.map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setColchaoMotivo(s)}
+                  className={`rounded-lg border px-2.5 py-1 text-xs transition-all active:scale-95 ${
+                    colchaoMotivo === s
+                      ? 'border-sky-500 bg-sky-500/20 text-sky-200 font-bold'
+                      : 'border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white hover:border-neutral-700'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase block mb-1.5">
+              Quem Guardou / Titular
+            </span>
+            <div className="grid grid-cols-3 gap-2">
+              {(['Ele', 'Ela', 'Conjunto'] as Quem[]).map(q => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => setQuem(q)}
+                  className={`rounded-xl border py-2.5 text-sm font-bold transition-all active:scale-95 ${
+                    quem === q
+                      ? 'border-sky-500 bg-sky-500/20 text-sky-300 font-bold'
+                      : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold tracking-wider text-neutral-400 uppercase block mb-1">
+              Data do Aporte
+            </label>
+            <input
+              type="date"
+              value={dataGasto}
+              onChange={e => setDataGasto(e.target.value)}
+              className="w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs text-neutral-100 focus:border-sky-500 focus:outline-none"
+            />
+          </div>
+        </div>
+      ) : tipoLancamento === 'renda_extra' ? (
         /* CONTEÚDO ESPECÍFICO DE RENDA EXTRA */
         <div className="mt-4 space-y-4 animate-in fade-in">
           <div>
@@ -568,7 +725,19 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
       {/* Botão SALVAR Fixo na Base da Tela, Sempre Visível */}
       <div id="container-salvar-fixo" className="fixed bottom-0 left-0 right-0 z-40 border-t border-neutral-800/80 bg-neutral-950/95 p-3.5 backdrop-blur-md">
         <div className="mx-auto max-w-md">
-          {tipoLancamento === 'renda_extra' ? (
+          {tipoLancamento === 'colchao' ? (
+            <button
+              id="btn-salvar-colchao-principal"
+              type="button"
+              disabled={valorFinal <= 0}
+              onClick={handleSalvar}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-400 hover:bg-sky-300 py-3.5 text-base font-bold text-neutral-950 shadow-lg shadow-sky-500/20 transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ShieldCheck className="h-5 w-5" />
+              <span>+ GUARDAR NO COLCHÃO</span>
+              {valorFinal > 0 && <span className="font-mono text-sm opacity-90">(+{formatarMoeda(valorFinal)})</span>}
+            </button>
+          ) : tipoLancamento === 'renda_extra' ? (
             <button
               id="btn-salvar-renda-extra-principal"
               type="button"

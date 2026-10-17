@@ -394,7 +394,7 @@ export async function puxarDadosCompletosDaPlanilha(
     rangesToFetch.push(`${encodeURIComponent(abaOrcamento)}!A1:D`);
   }
   if (abasDisponiveis.includes(abaMetas)) {
-    rangesToFetch.push(`${encodeURIComponent(abaMetas)}!A1:E`);
+    rangesToFetch.push(`${encodeURIComponent(abaMetas)}!A1:F`);
   }
 
   const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${rangesToFetch
@@ -1204,3 +1204,109 @@ export async function zerarPlanilhaERecomessar(
     mensagem: 'Planilha e aplicativo zerados com sucesso! A aba Lancamentos agora tem apenas os cabeçalhos, pronta para seus gastos reais.'
   };
 }
+
+/**
+ * Adiciona um aporte ou retirada na aba Metas da planilha e atualiza o colchão
+ */
+export async function anexarTransacaoReservaNaPlanilha(
+  spreadsheetId: string,
+  transacao: TransacaoReserva
+): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    if (!token) return false;
+
+    // Linha: ID, Data, Tipo (Aporte/Retirada), Valor, Motivo, Saldo Acumulado
+    const linha = [
+      transacao.id,
+      transacao.data,
+      transacao.tipo,
+      transacao.valor,
+      transacao.motivo,
+      transacao.saldo_acumulado
+    ];
+
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Metas!A:F:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          values: [linha]
+        })
+      }
+    );
+
+    if (res.status === 401) {
+      invalidarTokenGoogle();
+      return false;
+    }
+
+    if (res.ok) {
+      localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+      window.dispatchEvent(new CustomEvent('orcamento-sync-updated'));
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('Erro ao anexar transação de reserva no Google Sheets:', err);
+    return false;
+  }
+}
+
+/**
+ * Reescreve a lista completa da aba Metas na planilha Google Sheets
+ */
+export async function sincronizarReservaNaPlanilha(
+  spreadsheetId: string,
+  reservas: TransacaoReserva[]
+): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    if (!token) return false;
+
+    const cabecalho = [['ID', 'Data', 'Tipo', 'Valor (R$)', 'Motivo', 'Saldo Acumulado']];
+    const linhas = reservas.map(r => [
+      r.id,
+      r.data,
+      r.tipo,
+      r.valor,
+      r.motivo,
+      r.saldo_acumulado
+    ]);
+
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Metas!A1:F?valueInputOption=USER_ENTERED`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          range: 'Metas!A1:F',
+          values: [...cabecalho, ...linhas]
+        })
+      }
+    );
+
+    if (res.status === 401) {
+      invalidarTokenGoogle();
+      return false;
+    }
+
+    if (res.ok) {
+      localStorage.setItem(SHEETS_STORAGE_KEYS.LAST_SYNC, new Date().toLocaleTimeString('pt-BR'));
+      window.dispatchEvent(new CustomEvent('orcamento-sync-updated'));
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('Erro ao sincronizar aba Metas no Google Sheets:', err);
+    return false;
+  }
+}
+

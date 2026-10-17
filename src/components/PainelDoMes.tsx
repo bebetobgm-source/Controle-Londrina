@@ -8,7 +8,10 @@ import {
   adicionarContaFixa,
   excluirContaFixa,
   registrarRendaExtra,
-  excluirRendaExtra
+  excluirRendaExtra,
+  registrarAporteReserva,
+  excluirTransacaoReserva,
+  ajustarSaldoColchao
 } from '../services/storage';
 import {
   calcularStatusRitmo,
@@ -22,6 +25,8 @@ import {
   substituirLancamentosNaPlanilha,
   sincronizarFixasNaPlanilha,
   anexarRendaExtraNaPlanilha,
+  anexarTransacaoReservaNaPlanilha,
+  sincronizarReservaNaPlanilha,
   puxarDadosCompletosDaPlanilha,
   limparDuplicadosDaPlanilha,
   zerarPlanilhaERecomessar,
@@ -118,6 +123,15 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
   const [rendaQuem, setRendaQuem] = useState<Quem>(appState.ultimoQuem || 'Ele');
   const [rendaCategoria, setRendaCategoria] = useState(CATEGORIAS_RENDA_EXTRA[0].nome);
   const [rendaFormaRecebimento, setRendaFormaRecebimento] = useState('Pix');
+
+  // Estados para Colchão / Reserva de Emergência
+  const [modalColchaoAberta, setModalColchaoAberta] = useState(false);
+  const [modalExtratoColchaoAberta, setModalExtratoColchaoAberta] = useState(false);
+  const [colchaoModo, setColchaoModo] = useState<'aporte' | 'ajuste_total'>('aporte');
+  const [colchaoFormValor, setColchaoFormValor] = useState('');
+  const [colchaoFormMotivo, setColchaoFormMotivo] = useState('Dinheiro investido em outra conta (CDB D+30)');
+  const [colchaoFormData, setColchaoFormData] = useState(() => new Date().toISOString().split('T')[0]);
+  const [colchaoFormQuem, setColchaoFormQuem] = useState<Quem>(appState.ultimoQuem || 'Ele');
 
   const handleToggleFixa = async (descricao: string) => {
     const novoEstado = alternarStatusContaFixa(descricao, appState);
@@ -268,6 +282,78 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
     if (planilha) {
       setSincronizando(true);
       await sincronizarTudoSemDuplicar(planilha.id, novoEstado.lancamentos, novoEstado.rendasExtras);
+      setSincronizando(false);
+    }
+    setTimeout(() => setMensagemFeedback(null), 3000);
+  };
+
+  const handleAbrirModalColchao = (modo: 'aporte' | 'ajuste_total') => {
+    setColchaoModo(modo);
+    setColchaoFormValor(modo === 'ajuste_total' ? String(saldoColchao) : '');
+    setColchaoFormMotivo(modo === 'ajuste_total' ? 'Ajuste de Saldo do Colchão' : 'Dinheiro investido em outra conta (CDB D+30)');
+    setColchaoFormData(new Date().toISOString().split('T')[0]);
+    setColchaoFormQuem(appState.ultimoQuem || 'Ele');
+    setModalColchaoAberta(true);
+  };
+
+  const handleSalvarColchao = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const valorNum = parseFloat(colchaoFormValor.replace(',', '.'));
+    if (isNaN(valorNum) || valorNum < 0) {
+      alert('Por favor insira um valor numérico válido.');
+      return;
+    }
+
+    if (colchaoModo === 'aporte') {
+      const motivoFinal = colchaoFormMotivo.trim() || 'Aporte na Reserva';
+      const { estadoAtualizado, novaTransacao } = registrarAporteReserva(
+        {
+          valor: valorNum,
+          motivo: motivoFinal,
+          tipo: 'Aporte',
+          data: colchaoFormData || new Date().toISOString().split('T')[0]
+        },
+        appState
+      );
+      setAppState(estadoAtualizado);
+      setModalColchaoAberta(false);
+      setColchaoFormValor('');
+      setMensagemFeedback(`🛡️ Aporte de ${formatarMoeda(valorNum)} adicionado ao Colchão!`);
+
+      const planilha = obterPlanilhaConectada();
+      if (planilha) {
+        setSincronizando(true);
+        await anexarTransacaoReservaNaPlanilha(planilha.id, novaTransacao);
+        setSincronizando(false);
+      }
+    } else {
+      // Ajustar saldo total consolidado
+      const motivoFinal = colchaoFormMotivo.trim() || 'Ajuste de Saldo Consolidado';
+      const { estadoAtualizado } = ajustarSaldoColchao(valorNum, motivoFinal, appState);
+      setAppState(estadoAtualizado);
+      setModalColchaoAberta(false);
+      setColchaoFormValor('');
+      setMensagemFeedback(`🛡️ Saldo total do Colchão ajustado para ${formatarMoeda(valorNum)}!`);
+
+      const planilha = obterPlanilhaConectada();
+      if (planilha) {
+        setSincronizando(true);
+        await sincronizarReservaNaPlanilha(planilha.id, estadoAtualizado.reserva);
+        setSincronizando(false);
+      }
+    }
+    setTimeout(() => setMensagemFeedback(null), 4000);
+  };
+
+  const handleExcluirTransacaoReserva = async (id: string) => {
+    const novoEstado = excluirTransacaoReserva(id, appState);
+    setAppState(novoEstado);
+    setMensagemFeedback('Lançamento removido do Colchão e saldo recalculado.');
+
+    const planilha = obterPlanilhaConectada();
+    if (planilha) {
+      setSincronizando(true);
+      await sincronizarReservaNaPlanilha(planilha.id, novoEstado.reserva);
       setSincronizando(false);
     }
     setTimeout(() => setMensagemFeedback(null), 3000);
@@ -993,7 +1079,32 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
 
       {/* 7. RESERVA: Meta mensal e Saldo do Colchão */}
       <div id="card-reserva-colchao" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 shadow-lg">
-        <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">Reserva & Colchão</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-sky-400" />
+            <span className="text-xs font-bold tracking-wider text-neutral-300 uppercase">Reserva & Colchão de Emergência</span>
+          </div>
+          <span className="text-[11px] font-mono font-bold text-sky-400 bg-sky-950/70 border border-sky-800/60 px-2 py-0.5 rounded-full">
+            {((saldoColchao / (appState.config.colchao_meta || 4600)) * 100).toFixed(0)}% da meta
+          </span>
+        </div>
+
+        {/* Barra visual de progresso da meta */}
+        <div className="mt-3">
+          <div className="h-2 w-full rounded-full bg-neutral-950 border border-neutral-800 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-sky-500 via-teal-400 to-emerald-400 transition-all duration-500"
+              style={{
+                width: `${Math.min(100, Math.max(0, (saldoColchao / (appState.config.colchao_meta || 4600)) * 100))}%`
+              }}
+            />
+          </div>
+          <div className="mt-1.5 flex items-center justify-between text-[10px] text-neutral-400">
+            <span>Saldo: <strong className="text-emerald-400 font-mono">{formatarMoeda(saldoColchao)}</strong></span>
+            <span>Meta final: <strong className="text-neutral-300 font-mono">{formatarMoeda(appState.config.colchao_meta)}</strong></span>
+          </div>
+        </div>
+
         <div className="mt-3 grid grid-cols-2 gap-3">
           <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3 text-center">
             <span className="text-[11px] text-neutral-400 uppercase font-semibold">Meta do Mês</span>
@@ -1006,6 +1117,44 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
             <div className="mt-1 text-xl font-bold text-emerald-400 font-mono">{formatarMoeda(saldoColchao)}</div>
             <span className="text-[10px] text-neutral-500">meta de {formatarMoeda(appState.config.colchao_meta)}</span>
           </div>
+        </div>
+
+        {/* Dica explicativa sobre investimentos externos (CDB D+30, etc.) */}
+        <div className="mt-3 rounded-xl border border-sky-900/40 bg-sky-950/20 p-3 text-[11px] text-sky-200/90 flex items-start gap-2.5">
+          <Sparkles className="h-4 w-4 text-sky-400 shrink-0 mt-0.5" />
+          <p className="leading-relaxed">
+            <strong className="text-sky-100">Dinheiro investido ou em outra conta (ex: CDB D+30)?</strong> Como o resgate tem carência e você não corre o risco de gastá-lo no dia a dia, lance-o aqui como <strong>Aporte</strong> ou faça o <strong>Ajuste de Saldo</strong> para compor o Colchão familiar sem mexer no seu orçamento mensal.
+          </p>
+        </div>
+
+        {/* Ações da Reserva / Colchão */}
+        <div className="mt-3.5 grid grid-cols-3 gap-2">
+          <button
+            type="button"
+            onClick={() => handleAbrirModalColchao('aporte')}
+            className="flex items-center justify-center gap-1.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 p-2.5 text-xs font-bold text-sky-300 transition-all active:scale-95"
+          >
+            <Plus className="h-3.5 w-3.5 text-sky-400" />
+            <span>+ Aporte</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAbrirModalColchao('ajuste_total')}
+            className="flex items-center justify-center gap-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700/80 border border-neutral-700 p-2.5 text-xs font-semibold text-neutral-200 transition-all active:scale-95"
+          >
+            <Pencil className="h-3.5 w-3.5 text-neutral-400" />
+            <span>Ajustar Saldo</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setModalExtratoColchaoAberta(true)}
+            className="flex items-center justify-center gap-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700/80 border border-neutral-700 p-2.5 text-xs font-semibold text-neutral-200 transition-all active:scale-95"
+          >
+            <Receipt className="h-3.5 w-3.5 text-neutral-400" />
+            <span>Extrato ({appState.reserva?.length || 0})</span>
+          </button>
         </div>
       </div>
 
@@ -1335,7 +1484,314 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
         </div>
       )}
 
-      {/* Modal de Confirmação Seguro (sem window.confirm) */}
+      {/* MODAL: APORTE / AJUSTE NO COLCHÃO */}
+      {modalColchaoAberta && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="w-full max-w-sm rounded-2xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5 text-sky-400" />
+                <h3 className="text-sm font-bold text-white">
+                  {colchaoModo === 'aporte' ? 'Novo Aporte no Colchão' : 'Ajustar Saldo do Colchão'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalColchaoAberta(false)}
+                className="text-neutral-400 hover:text-white p-1"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Alternador de Modo */}
+            <div className="mt-3.5 grid grid-cols-2 gap-1.5 rounded-xl bg-neutral-950 p-1 border border-neutral-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setColchaoModo('aporte');
+                  setColchaoFormValor('');
+                  setColchaoFormMotivo('Dinheiro investido em outra conta (CDB D+30)');
+                }}
+                className={`rounded-lg py-2 text-xs font-bold transition-all ${
+                  colchaoModo === 'aporte'
+                    ? 'bg-sky-500 text-neutral-950 shadow-md font-extrabold'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                + Aporte / Entrada
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setColchaoModo('ajuste_total');
+                  setColchaoFormValor(String(saldoColchao));
+                  setColchaoFormMotivo('Ajuste de Saldo do Colchão');
+                }}
+                className={`rounded-lg py-2 text-xs font-bold transition-all ${
+                  colchaoModo === 'ajuste_total'
+                    ? 'bg-neutral-800 text-white shadow-md font-extrabold'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                Ajustar Total
+              </button>
+            </div>
+
+            <form onSubmit={handleSalvarColchao} className="mt-4 space-y-3.5">
+              {colchaoModo === 'aporte' ? (
+                <div>
+                  <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                    Valor a Guardar (R$)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="0,00"
+                    value={colchaoFormValor}
+                    onChange={e => setColchaoFormValor(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-base font-mono text-white focus:border-sky-500 focus:outline-none"
+                    required
+                    autoFocus
+                  />
+                  <span className="text-[10px] text-neutral-500 mt-1 block">
+                    Este valor será somado ao colchão sem descontar dos seus gastos do mês.
+                  </span>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-neutral-300 block">
+                      Novo Saldo Total do Colchão (R$)
+                    </label>
+                    <span className="text-[10px] text-neutral-400 font-mono">
+                      Atual: {formatarMoeda(saldoColchao)}
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={colchaoFormValor}
+                    onChange={e => setColchaoFormValor(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-base font-mono text-white focus:border-sky-500 focus:outline-none"
+                    required
+                    autoFocus
+                  />
+                  <span className="text-[10px] text-neutral-500 mt-1 block">
+                    Altera diretamente o saldo consolidado da sua reserva de emergência.
+                  </span>
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                  Origem / Motivo
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Dinheiro em CDB D+30 outra conta..."
+                  value={colchaoFormMotivo}
+                  onChange={e => setColchaoFormMotivo(e.target.value)}
+                  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+                  required
+                />
+                {/* Sugestões rápidas */}
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {[
+                    'Dinheiro investido em outra conta (CDB D+30)',
+                    'Aporte mensal da economia',
+                    'Aplicação Tesouro / Poupança',
+                    'Reserva guardada'
+                  ].map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setColchaoFormMotivo(s)}
+                      className={`rounded px-2 py-0.5 text-[10px] transition-colors ${
+                        colchaoFormMotivo === s
+                          ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                          : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                    Quem Guardou?
+                  </label>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['Ele', 'Ela', 'Conjunto'] as Quem[]).map(q => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => setColchaoFormQuem(q)}
+                        className={`rounded-lg py-1.5 text-xs font-bold transition-all ${
+                          colchaoFormQuem === q
+                            ? 'bg-sky-500 text-neutral-950 font-extrabold'
+                            : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
+                        }`}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-neutral-300 block mb-1">
+                    Data do Aporte
+                  </label>
+                  <input
+                    type="date"
+                    value={colchaoFormData}
+                    onChange={e => setColchaoFormData(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => setModalColchaoAberta(false)}
+                  className="px-3 py-2 text-xs font-semibold text-neutral-400 hover:text-white rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={sincronizando}
+                  className="px-4 py-2 text-xs font-bold text-neutral-950 bg-sky-400 hover:bg-sky-300 rounded-xl transition-all shadow-lg shadow-sky-500/20 active:scale-95 disabled:opacity-50"
+                >
+                  {colchaoModo === 'aporte' ? '+ Guardar no Colchão' : 'Salvar Novo Saldo'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EXTRATO & HISTÓRICO DO COLCHÃO */}
+      {modalExtratoColchaoAberta && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-800 shrink-0">
+              <div className="flex items-center gap-2">
+                <Receipt className="h-5 w-5 text-sky-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Extrato da Reserva & Colchão</h3>
+                  <p className="text-[10px] text-neutral-400">
+                    Saldo Atual: <strong className="text-emerald-400 font-mono">{formatarMoeda(saldoColchao)}</strong> de {formatarMoeda(appState.config.colchao_meta)}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalExtratoColchaoAberta(false)}
+                className="text-neutral-400 hover:text-white p-1"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 overflow-y-auto space-y-2 pr-1 flex-1">
+              {!appState.reserva || appState.reserva.length === 0 ? (
+                <div className="py-8 text-center text-xs text-neutral-500">
+                  Nenhum aporte ou lançamento no colchão ainda.
+                </div>
+              ) : (
+                [...appState.reserva].reverse().map(r => (
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between rounded-xl border border-neutral-800/80 bg-neutral-950 p-3 text-xs"
+                  >
+                    <div className="min-w-0 flex-1 pr-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                            r.tipo === 'Aporte'
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : 'bg-rose-500/20 text-rose-300'
+                          }`}
+                        >
+                          {r.tipo}
+                        </span>
+                        <span className="font-semibold text-white truncate">
+                          {r.motivo || 'Aporte no Colchão'}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-[10px] text-neutral-400">
+                        <span>{formatarDataBR(r.data)}</span>
+                        <span>•</span>
+                        <span>Acumulado: <strong className="font-mono text-neutral-300">{formatarMoeda(r.saldo_acumulado)}</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span
+                        className={`font-mono text-sm font-bold ${
+                          r.tipo === 'Aporte' ? 'text-emerald-400' : 'text-rose-400'
+                        }`}
+                      >
+                        {r.tipo === 'Aporte' ? '+' : '-'} {formatarMoeda(r.valor)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setModalConfirmacao({
+                            aberto: true,
+                            titulo: 'Excluir lançamento da reserva?',
+                            mensagem: `Deseja remover "${r.motivo}" (${formatarMoeda(r.valor)})? O saldo do colchão será recalculado automaticamente e sincronizado com a planilha.`,
+                            textoBotao: 'Excluir',
+                            variante: 'perigo',
+                            acao: async () => {
+                              await handleExcluirTransacaoReserva(r.id);
+                              setModalConfirmacao(null);
+                            }
+                          });
+                        }}
+                        className="text-neutral-500 hover:text-rose-400 p-1 transition-colors"
+                        title="Excluir lançamento"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-neutral-800 shrink-0 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  setModalExtratoColchaoAberta(false);
+                  handleAbrirModalColchao('aporte');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-xs font-bold transition-colors"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>+ Novo Aporte</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalExtratoColchaoAberta(false)}
+                className="px-3 py-1.5 text-xs font-semibold text-neutral-400 hover:text-white"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {modalConfirmacao && modalConfirmacao.aberto && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl border border-neutral-800 bg-neutral-900 p-5 shadow-2xl">
