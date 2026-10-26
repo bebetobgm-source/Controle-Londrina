@@ -29,8 +29,15 @@ const STORAGE_KEYS = {
   CONFIG: 'orcamento_londrina_config_v1',
   ALERTAS_LOG: 'orcamento_londrina_alertas_log_v1',
   ULTIMO_QUEM: 'orcamento_londrina_ultimo_quem_v1',
-  SIMULACAO_DIA: 'orcamento_londrina_simulacao_dia_v1'
+  SIMULACAO_DIA: 'orcamento_londrina_simulacao_dia_v1',
+  MES_ATIVO: 'orcamento_londrina_mes_ativo_v1',
+  CLOUD_CASAL_PREFIX: 'orcamento_saas_casal_v1_'
 };
+
+export function obterMesAtualPadrao(): string {
+  const agora = new Date();
+  return `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+}
 
 export interface AppState {
   lancamentos: Lancamento[];
@@ -43,6 +50,7 @@ export interface AppState {
   alertasLog: AlertaLog[];
   ultimoQuem: Quem;
   diaAtualSimulado: number | null; // se null, usa Date.now().getDate()
+  mesAtivo: string; // AAAA-MM
 }
 
 export function carregarEstado(): AppState {
@@ -57,6 +65,7 @@ export function carregarEstado(): AppState {
     const rawAlertas = localStorage.getItem(STORAGE_KEYS.ALERTAS_LOG);
     const rawQuem = localStorage.getItem(STORAGE_KEYS.ULTIMO_QUEM) as Quem | null;
     const rawDia = localStorage.getItem(STORAGE_KEYS.SIMULACAO_DIA);
+    const rawMesAtivo = localStorage.getItem(STORAGE_KEYS.MES_ATIVO);
 
     const lancamentos = rawLancamentos ? JSON.parse(rawLancamentos) : [...LANCAMENTOS_INICIAIS];
     const rendasExtras = rawRendasExtras ? JSON.parse(rawRendasExtras) : [];
@@ -79,10 +88,22 @@ export function carregarEstado(): AppState {
     }
 
     const reserva = rawReserva ? JSON.parse(rawReserva) : [...RESERVA_INICIAL];
-    const config = rawConfig ? JSON.parse(rawConfig) : { ...CONFIG_PADRAO };
+    const parsedConfig = rawConfig ? JSON.parse(rawConfig) : {};
+    const config: Configuracao = {
+      ...CONFIG_PADRAO,
+      ...parsedConfig,
+      nome_familia: parsedConfig.nome_familia || CONFIG_PADRAO.nome_familia || 'Família Londrina',
+      nome_parceiro_1: parsedConfig.nome_parceiro_1 || CONFIG_PADRAO.nome_parceiro_1 || 'Ele',
+      nome_parceiro_2: parsedConfig.nome_parceiro_2 || CONFIG_PADRAO.nome_parceiro_2 || 'Ela',
+      codigo_casal: parsedConfig.codigo_casal || CONFIG_PADRAO.codigo_casal || 'CASAL-8492',
+      plano_assinatura: parsedConfig.plano_assinatura || 'trial',
+      data_inicio_trial: parsedConfig.data_inicio_trial || new Date().toISOString().split('T')[0],
+      onboarding_concluido: parsedConfig.onboarding_concluido ?? true
+    };
     const alertasLog = rawAlertas ? JSON.parse(rawAlertas) : [];
     const ultimoQuem = rawQuem || 'Ele';
     const diaAtualSimulado = rawDia ? parseInt(rawDia, 10) : null;
+    const mesAtivo = rawMesAtivo || obterMesAtualPadrao();
 
     return {
       lancamentos,
@@ -94,7 +115,8 @@ export function carregarEstado(): AppState {
       config,
       alertasLog,
       ultimoQuem,
-      diaAtualSimulado
+      diaAtualSimulado,
+      mesAtivo
     };
   } catch (err) {
     console.error('Erro ao ler do storage local:', err);
@@ -108,7 +130,8 @@ export function carregarEstado(): AppState {
       config: { ...CONFIG_PADRAO },
       alertasLog: [],
       ultimoQuem: 'Ele',
-      diaAtualSimulado: null
+      diaAtualSimulado: null,
+      mesAtivo: obterMesAtualPadrao()
     };
   }
 }
@@ -149,6 +172,30 @@ export function salvarEstado(estado: Partial<AppState>) {
         localStorage.setItem(STORAGE_KEYS.SIMULACAO_DIA, String(estado.diaAtualSimulado));
       }
     }
+    if (estado.mesAtivo !== undefined) {
+      localStorage.setItem(STORAGE_KEYS.MES_ATIVO, estado.mesAtivo);
+    }
+
+    // Espelhar no snapshot por código do casal para permitir vínculo imediato por código/link
+    const codigo = estado.config?.codigo_casal || JSON.parse(localStorage.getItem(STORAGE_KEYS.CONFIG) || '{}')?.codigo_casal;
+    if (codigo) {
+      try {
+        const snapshotAtual = JSON.parse(localStorage.getItem(STORAGE_KEYS.CLOUD_CASAL_PREFIX + codigo) || '{}');
+        const novoSnapshot = {
+          ...snapshotAtual,
+          ...(estado.lancamentos !== undefined ? { lancamentos: estado.lancamentos } : {}),
+          ...(estado.rendasExtras !== undefined ? { rendasExtras: estado.rendasExtras } : {}),
+          ...(estado.fixas !== undefined ? { fixas: estado.fixas } : {}),
+          ...(estado.orcamento !== undefined ? { orcamento: estado.orcamento } : {}),
+          ...(estado.reserva !== undefined ? { reserva: estado.reserva } : {}),
+          ...(estado.config !== undefined ? { config: estado.config } : {}),
+          atualizadoEm: new Date().toISOString()
+        };
+        localStorage.setItem(STORAGE_KEYS.CLOUD_CASAL_PREFIX + codigo, JSON.stringify(novoSnapshot));
+      } catch {
+        // Ignora erro de cota
+      }
+    }
   } catch (err) {
     console.error('Erro ao salvar no storage local:', err);
   }
@@ -160,7 +207,7 @@ export function registrarLancamento(
 ): { estadoAtualizado: AppState; novoId: string; alertasDisparados: AlertaLog[] } {
   const agora = new Date();
   const id = `lan-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-  const mesRef = novo.data ? novo.data.substring(0, 7) : `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+  const mesRef = estadoAtual.mesAtivo || (novo.data ? novo.data.substring(0, 7) : obterMesAtualPadrao());
   
   const lancamentoCompleto: Lancamento = {
     ...novo,
@@ -239,8 +286,7 @@ export function limparTodosLancamentos(estadoAtual: AppState): AppState {
 }
 
 export function alternarStatusContaFixa(descricao: string, estadoAtual: AppState): AppState {
-  const agora = new Date();
-  const mesRefAtual = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+  const mesRefAtual = estadoAtual.mesAtivo || obterMesAtualPadrao();
 
   const novasFixas = estadoAtual.fixas.map(f => {
     if (f.descricao === descricao) {
@@ -297,9 +343,9 @@ export function registrarRendaExtra(
   estadoAtual: AppState
 ): { estadoAtualizado: AppState; novoId: string } {
   const agora = new Date();
-  const mesRefAtual = dados.data
+  const mesRefAtual = estadoAtual.mesAtivo || (dados.data
     ? dados.data.substring(0, 7)
-    : `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+    : obterMesAtualPadrao());
 
   const novoId = `rec-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const novaRenda: RendaExtra = {
@@ -452,10 +498,239 @@ export function resetarParaDadosPadrao(): AppState {
     config: { ...CONFIG_PADRAO },
     alertasLog: [],
     ultimoQuem: 'Ele',
-    diaAtualSimulado: null
+    diaAtualSimulado: null,
+    mesAtivo: obterMesAtualPadrao()
   };
   salvarEstado(estado);
   return estado;
+}
+
+// -------------------------------------------------------------
+// FUNÇÕES SAAS MULTI-CASAL, MULTI-MÊS E PERSONALIZAÇÃO
+// -------------------------------------------------------------
+
+export function obterRotuloQuem(quem: Quem, config?: Configuracao): string {
+  if (quem === 'Ele') return config?.nome_parceiro_1?.trim() || 'Ele';
+  if (quem === 'Ela') return config?.nome_parceiro_2?.trim() || 'Ela';
+  return 'Casal';
+}
+
+const NOMES_MESES_CURTOS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+const NOMES_MESES_COMPLETOS = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+];
+
+export function formatarMesExibicao(mesRef: string, curto = true): string {
+  if (!mesRef || !mesRef.includes('-')) return mesRef;
+  const [ano, mesStr] = mesRef.split('-');
+  const idx = Math.max(0, Math.min(11, parseInt(mesStr, 10) - 1));
+  return curto ? `${NOMES_MESES_CURTOS[idx]}/${ano}` : `${NOMES_MESES_COMPLETOS[idx]} de ${ano}`;
+}
+
+export function navegarMes(mesRefAtual: string, direcao: -1 | 1): string {
+  const [anoStr, mesStr] = (mesRefAtual || obterMesAtualPadrao()).split('-');
+  let ano = parseInt(anoStr, 10);
+  let mes = parseInt(mesStr, 10) + direcao;
+  if (mes < 1) {
+    mes = 12;
+    ano -= 1;
+  } else if (mes > 12) {
+    mes = 1;
+    ano += 1;
+  }
+  return `${ano}-${String(mes).padStart(2, '0')}`;
+}
+
+export function filtrarLancamentosDoMes(lancamentos: Lancamento[], mesAtivo: string): Lancamento[] {
+  const mesPadraoSistema = obterMesAtualPadrao();
+  const idsIniciais = new Set(['lan-1', 'lan-2', 'lan-3', 'lan-4']);
+  return lancamentos.filter(l => {
+    if (l.mes_ref === mesAtivo) return true;
+    // Se estiver no mês atual do sistema, inclui lançamentos legado ou exemplos iniciais
+    if (mesAtivo === mesPadraoSistema && (idsIniciais.has(l.id) || !l.mes_ref)) {
+      return true;
+    }
+    return false;
+  });
+}
+
+export function atualizarConfiguracaoCasal(
+  parcial: Partial<Configuracao>,
+  estadoAtual: AppState
+): AppState {
+  const novaConfig: Configuracao = {
+    ...estadoAtual.config,
+    ...parcial
+  };
+  const novoEstado: AppState = {
+    ...estadoAtual,
+    config: novaConfig
+  };
+  salvarEstado(novoEstado);
+  return novoEstado;
+}
+
+export function salvarOrcamentoCompleto(
+  novosTetos: Record<string, number>,
+  estadoAtual: AppState
+): AppState {
+  const novoOrcamento = estadoAtual.orcamento.map(item => {
+    if (novosTetos[item.categoria] !== undefined) {
+      return { ...item, teto: Math.max(0, novosTetos[item.categoria]) };
+    }
+    return item;
+  });
+  const novoEstado: AppState = {
+    ...estadoAtual,
+    orcamento: novoOrcamento
+  };
+  salvarEstado(novoEstado);
+  return novoEstado;
+}
+
+export function virarMesCiclo(
+  novoMesRef: string,
+  transferirSobraColchao: boolean,
+  valorSobra: number,
+  estadoAtual: AppState
+): AppState {
+  let estado = {
+    ...estadoAtual,
+    mesAtivo: novoMesRef,
+    diaAtualSimulado: 1
+  };
+
+  if (transferirSobraColchao && valorSobra > 0) {
+    const res = registrarAporteReserva(
+      {
+        valor: valorSobra,
+        motivo: `Sobra transferida no fechamento de ${formatarMesExibicao(estadoAtual.mesAtivo, true)}`,
+        tipo: 'Aporte',
+        data: `${novoMesRef}-01`
+      },
+      estado
+    );
+    estado = res.estadoAtualizado;
+  }
+
+  salvarEstado(estado);
+  return estado;
+}
+
+export function gerarCodigoCasalAleatorio(): string {
+  const num = Math.floor(1000 + Math.random() * 9000);
+  return `CASAL-${num}`;
+}
+
+export function vincularPorCodigoCasal(
+  codigoInput: string,
+  estadoAtual: AppState
+): { estadoAtualizado: AppState; encontrouDadosNuvem: boolean } {
+  const codigoLimpo = codigoInput.trim().toUpperCase();
+  const rawSnapshot = localStorage.getItem(STORAGE_KEYS.CLOUD_CASAL_PREFIX + codigoLimpo);
+
+  if (rawSnapshot) {
+    try {
+      const snap = JSON.parse(rawSnapshot);
+      const novoEstado: AppState = {
+        ...estadoAtual,
+        lancamentos: snap.lancamentos || estadoAtual.lancamentos,
+        rendasExtras: snap.rendasExtras || estadoAtual.rendasExtras,
+        fixas: snap.fixas || estadoAtual.fixas,
+        orcamento: snap.orcamento || estadoAtual.orcamento,
+        reserva: snap.reserva || estadoAtual.reserva,
+        config: {
+          ...estadoAtual.config,
+          ...(snap.config || {}),
+          codigo_casal: codigoLimpo
+        }
+      };
+      salvarEstado(novoEstado);
+      return { estadoAtualizado: novoEstado, encontrouDadosNuvem: true };
+    } catch {
+      // Continua como novo vínculo
+    }
+  }
+
+  const novoEstado: AppState = {
+    ...estadoAtual,
+    config: {
+      ...estadoAtual.config,
+      codigo_casal: codigoLimpo
+    }
+  };
+  salvarEstado(novoEstado);
+  return { estadoAtualizado: novoEstado, encontrouDadosNuvem: false };
+}
+
+export function aplicarOnboardingNovoCasal(
+  dados: {
+    nomeFamilia: string;
+    nomeParceiro1: string;
+    nomeParceiro2: string;
+    rendaLiquida: number;
+    metaReservaMensal: number;
+    metaColchaoTotal: number;
+    saldoColchaoInicial: number;
+    tetosCategorias: Record<string, number>;
+    limparExemplos: boolean;
+  },
+  estadoAtual: AppState
+): AppState {
+  const codigo = gerarCodigoCasalAleatorio();
+  const hoje = new Date().toISOString().split('T')[0];
+
+  const novaConfig: Configuracao = {
+    ...estadoAtual.config,
+    nome_familia: dados.nomeFamilia.trim() || 'Nossa Família',
+    nome_parceiro_1: dados.nomeParceiro1.trim() || 'Parceiro 1',
+    nome_parceiro_2: dados.nomeParceiro2.trim() || 'Parceiro 2',
+    renda_liquida_mensal: dados.rendaLiquida > 0 ? dados.rendaLiquida : 6500,
+    meta_reserva_mensal: dados.metaReservaMensal >= 0 ? dados.metaReservaMensal : 200,
+    colchao_meta: dados.metaColchaoTotal > 0 ? dados.metaColchaoTotal : 4600,
+    codigo_casal: codigo,
+    plano_assinatura: 'trial',
+    data_inicio_trial: hoje,
+    onboarding_concluido: true
+  };
+
+  const novoOrcamento = estadoAtual.orcamento.map(item => {
+    if (dados.tetosCategorias[item.categoria] !== undefined) {
+      return { ...item, teto: Math.max(0, dados.tetosCategorias[item.categoria]) };
+    }
+    if (item.categoria === 'Reserva') {
+      return { ...item, teto: novaConfig.meta_reserva_mensal };
+    }
+    return item;
+  });
+
+  const novaReserva: TransacaoReserva[] = dados.saldoColchaoInicial >= 0
+    ? [
+        {
+          id: `res-onb-${Date.now()}`,
+          data: hoje,
+          valor: dados.saldoColchaoInicial,
+          tipo: 'Aporte',
+          motivo: 'Saldo inicial do Colchão de Emergência',
+          saldo_acumulado: dados.saldoColchaoInicial
+        }
+      ]
+    : estadoAtual.reserva;
+
+  const novoEstado: AppState = {
+    ...estadoAtual,
+    config: novaConfig,
+    orcamento: novoOrcamento,
+    reserva: novaReserva,
+    lancamentos: dados.limparExemplos ? [] : estadoAtual.lancamentos,
+    rendasExtras: dados.limparExemplos ? [] : estadoAtual.rendasExtras,
+    mesAtivo: obterMesAtualPadrao(),
+    diaAtualSimulado: null
+  };
+
+  salvarEstado(novoEstado);
+  return novoEstado;
 }
 
 // -------------------------------------------------------------

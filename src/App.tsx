@@ -1,10 +1,23 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { carregarEstadoInicial, salvarEstado, AppState } from './services/storage';
+import {
+  carregarEstadoInicial,
+  salvarEstado,
+  AppState,
+  obterRotuloQuem,
+  formatarMesExibicao,
+  navegarMes,
+  filtrarLancamentosDoMes,
+  vincularPorCodigoCasal,
+  aplicarOnboardingNovoCasal
+} from './services/storage';
 import { LancamentoRapido } from './components/LancamentoRapido';
 import { PainelDoMes } from './components/PainelDoMes';
 import { ConselheiroView } from './components/ConselheiroView';
 import { SimuladorView } from './components/SimuladorView';
 import { TestesECodigoView } from './components/TestesECodigoView';
+import { LandingPageSaaS } from './components/LandingPageSaaS';
+import { OnboardingCasal } from './components/OnboardingCasal';
+import { GestaoCasalSaaSModal } from './components/GestaoCasalSaaSModal';
 import { verificarAlertas, calcularStatusRitmo, formatarMoeda } from './services/engine';
 import {
   PlusCircle,
@@ -18,7 +31,11 @@ import {
   CloudCheck,
   RefreshCw,
   ShieldAlert,
-  Users
+  Users,
+  ChevronLeft,
+  ChevronRight,
+  Settings,
+  Crown
 } from 'lucide-react';
 import {
   obterPlanilhaConectada,
@@ -30,10 +47,18 @@ import {
 import { initAuth, isTokenExpirado, renovarTokenGoogle } from './services/googleAuth';
 
 type AbaAtiva = 'lancamento' | 'painel' | 'conselheiro' | 'simulador' | 'testes';
+type ModoTelaSaaS = 'app' | 'landing' | 'onboarding';
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>(() => carregarEstadoInicial());
   const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('lancamento');
+  const [modoTelaSaaS, setModoTelaSaaS] = useState<ModoTelaSaaS>(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('modo') === 'vendas' || params.get('landing') === '1') return 'landing';
+    return 'app';
+  });
+  const [modalSaaSAberto, setModalSaaSAberto] = useState<boolean>(false);
+  const [abaModalSaaS, setAbaModalSaaS] = useState<'casal' | 'orcamento' | 'virar_mes' | 'assinatura'>('casal');
   const [alertaCriticoDispensado, setAlertaCriticoDispensado] = useState<boolean>(false);
   const [sincronizandoNuvem, setSincronizandoNuvem] = useState<boolean>(false);
   const [statusSincronizacao, setStatusSincronizacao] = useState<'ocioso' | 'sincronizando' | 'sincronizado'>('ocioso');
@@ -69,6 +94,7 @@ export default function App() {
         setStatusSincronizacao('sincronizado');
 
         setAppState(prev => {
+          const nomeParceira = obterRotuloQuem('Ela', prev.config);
           // Detectar lançamentos novos do cônjuge
           if (avisarSeNovo && resultado.lancamentos.length > prev.lancamentos.length) {
             const diferenca = resultado.lancamentos.length - prev.lancamentos.length;
@@ -77,7 +103,7 @@ export default function App() {
             );
             if (novoDaEsposa) {
               setNotificacaoSincronizacao(
-                `✨ Novo gasto da esposa sincronizado: ${formatarMoeda(novoDaEsposa.valor)} (${novoDaEsposa.categoria})`
+                `✨ Novo gasto de ${nomeParceira} sincronizado: ${formatarMoeda(novoDaEsposa.valor)} (${novoDaEsposa.categoria})`
               );
             } else {
               setNotificacaoSincronizacao(
@@ -118,19 +144,32 @@ export default function App() {
     []
   );
 
-  // 1. Detectar parâmetro de URL (?planilha=ID ou ?sheet=ID) para conexão instantânea da esposa
+  // 1. Detectar parâmetro de URL (?planilha=ID, ?sheet=ID ou ?convite=CASAL-XXXX) para conexão instantânea do par
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       const sheetParam = params.get('planilha') || params.get('sheet') || params.get('sheetId');
+      const conviteParam = params.get('convite') || params.get('casal');
+
+      if (conviteParam) {
+        setAppState(prev => {
+          const { estadoAtualizado } = vincularPorCodigoCasal(conviteParam, prev);
+          return estadoAtualizado;
+        });
+        setModoTelaSaaS('app');
+        setNotificacaoSincronizacao(
+          `🔗 Conectado ao orçamento familiar (${conviteParam.toUpperCase()})!`
+        );
+        setTimeout(() => setNotificacaoSincronizacao(null), 5000);
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+
       if (sheetParam) {
         const idLimpo = extrairSpreadsheetId(sheetParam);
         if (idLimpo) {
           salvarPlanilhaConectada(idLimpo, 'Orçamento Doméstico Londrina (Casal)');
-          console.log('Planilha vinculada via link compartilhado:', idLimpo);
           setNotificacaoSincronizacao('🔗 Conectado à planilha do casal! Sincronizando dados compartilhados...');
           sincronizarComPlanilha(false, false);
-          // Limpa URL
           window.history.replaceState({}, '', window.location.pathname);
         }
       }
@@ -146,7 +185,7 @@ export default function App() {
       if (/FBAN|FBAV|Instagram|WhatsApp|Line|wv/i.test(ua)) {
         setIsInAppBrowser(true);
       }
-    } catch (e) {
+    } catch {
       // Ignora erro
     }
   }, []);
@@ -176,7 +215,7 @@ export default function App() {
     return () => clearInterval(timer);
   }, [sincronizarComPlanilha]);
 
-  // 5. SINCRONIZAR AO RETORNAR PARA O APP (troca de aba, destravar celular, foco da janela)
+  // 5. SINCRONIZAR AO RETORNAR PARA O APP E ENTRE ABAS (storage listener para código do casal)
   useEffect(() => {
     const handleVisibilidade = () => {
       if (document.visibilityState === 'visible') {
@@ -192,17 +231,24 @@ export default function App() {
     const handleExpirou = () => {
       setSessaoGoogleExpirada(true);
     };
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key && e.key.startsWith('orcamento_')) {
+        setAppState(carregarEstadoInicial());
+      }
+    };
 
     document.addEventListener('visibilitychange', handleVisibilidade);
     window.addEventListener('focus', handleFoco);
     window.addEventListener('orcamento-sync-updated', handleSyncAtualizado);
     window.addEventListener('orcamento-google-sessao-expirada', handleExpirou);
+    window.addEventListener('storage', handleStorageChange);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilidade);
       window.removeEventListener('focus', handleFoco);
       window.removeEventListener('orcamento-sync-updated', handleSyncAtualizado);
       window.removeEventListener('orcamento-google-sessao-expirada', handleExpirou);
+      window.removeEventListener('storage', handleStorageChange);
     };
   }, [sincronizarComPlanilha]);
 
@@ -226,12 +272,18 @@ export default function App() {
 
   const agora = new Date();
   const diaAtual = appState.diaAtualSimulado || agora.getDate();
-  const totalDiasMes = new Date(agora.getFullYear(), agora.getMonth() + 1, 0).getDate();
+  const mesAtivo = appState.mesAtivo || `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+  const [anoAtivoNum, mesAtivoNum] = mesAtivo.split('-').map(Number);
+  const totalDiasMes = new Date(anoAtivoNum || agora.getFullYear(), mesAtivoNum || (agora.getMonth() + 1), 0).getDate();
 
-  // Verificar se há alertas ativos
+  const lancamentosMesAtivo = useMemo(() => {
+    return filtrarLancamentosDoMes(appState.lancamentos, mesAtivo);
+  }, [appState.lancamentos, mesAtivo]);
+
+  // Verificar se há alertas ativos no mês ativo
   const alertasAtivos = useMemo(() => {
     return verificarAlertas(
-      appState.lancamentos,
+      lancamentosMesAtivo,
       appState.orcamento,
       appState.fixas,
       appState.config,
@@ -241,17 +293,12 @@ export default function App() {
       undefined,
       appState.rendasExtras
     );
-  }, [appState, diaAtual, totalDiasMes]);
+  }, [lancamentosMesAtivo, appState.orcamento, appState.fixas, appState.config, appState.reserva, appState.rendasExtras, diaAtual, totalDiasMes]);
 
   // Alerta crítico prioritário (Regra 5 ou Regra 4 ou qualquer vermelho)
   const alertaCritico = useMemo(() => {
     return alertasAtivos.find(a => a.severidade === 'vermelho' || a.tipo === 'Fixas Descobertas');
   }, [alertasAtivos]);
-
-  // Status de ritmo geral
-  const statusGeral = useMemo(() => {
-    return calcularStatusRitmo(appState.lancamentos, appState.orcamento, diaAtual, totalDiasMes);
-  }, [appState.lancamentos, appState.orcamento, diaAtual, totalDiasMes]);
 
   const handleSimularDia = (novoDia: number) => {
     setAppState(prev => {
@@ -261,6 +308,65 @@ export default function App() {
     });
     setAlertaCriticoDispensado(false);
   };
+
+  const handleMudarMes = (direcao: -1 | 1) => {
+    setAppState(prev => {
+      const novoMes = navegarMes(prev.mesAtivo, direcao);
+      const atualizado = { ...prev, mesAtivo: novoMes };
+      salvarEstado(atualizado);
+      return atualizado;
+    });
+  };
+
+  const handleAbrirConfigSaaS = (aba: 'casal' | 'orcamento' | 'virar_mes' | 'assinatura' = 'casal') => {
+    setAbaModalSaaS(aba);
+    setModalSaaSAberto(true);
+  };
+
+  // Se estiver na Landing Page de Vendas SaaS
+  if (modoTelaSaaS === 'landing') {
+    return (
+      <LandingPageSaaS
+        codigoAtual={appState.config.codigo_casal}
+        nomeFamiliaAtual={appState.config.nome_familia}
+        onVoltarPainelAtual={() => setModoTelaSaaS('app')}
+        onIniciarOnboarding={() => setModoTelaSaaS('onboarding')}
+        onVincularCodigo={codigo => {
+          const { estadoAtualizado } = vincularPorCodigoCasal(codigo, appState);
+          setAppState(estadoAtualizado);
+          setModoTelaSaaS('app');
+          setNotificacaoSincronizacao(`🔗 Conectado ao orçamento do casal (${codigo})!`);
+          setTimeout(() => setNotificacaoSincronizacao(null), 4000);
+        }}
+      />
+    );
+  }
+
+  // Se estiver no Onboarding Guiado de 3 Passos
+  if (modoTelaSaaS === 'onboarding') {
+    return (
+      <OnboardingCasal
+        onCancelar={() => setModoTelaSaaS('app')}
+        onVincularCodigoExistente={codigo => {
+          const { estadoAtualizado } = vincularPorCodigoCasal(codigo, appState);
+          setAppState(estadoAtualizado);
+          setModoTelaSaaS('app');
+          setNotificacaoSincronizacao(`🔗 Celular conectado ao código ${codigo}!`);
+          setTimeout(() => setNotificacaoSincronizacao(null), 4000);
+        }}
+        onConcluirOnboarding={dados => {
+          const novo = aplicarOnboardingNovoCasal(dados, appState);
+          setAppState(novo);
+          setModoTelaSaaS('app');
+          setAbaAtiva('painel');
+          setNotificacaoSincronizacao(
+            `🎉 Painel de ${novo.config.nome_familia} criado! Código do casal: ${novo.config.codigo_casal}`
+          );
+          setTimeout(() => setNotificacaoSincronizacao(null), 6000);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center">
@@ -313,7 +419,7 @@ export default function App() {
           <div className="mt-2 p-2.5 rounded-xl bg-amber-950/90 border border-amber-700/80 flex items-center justify-between text-xs text-amber-200 animate-in fade-in">
             <div className="flex items-center gap-2">
               <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" />
-              <span className="text-[11px] leading-tight">Sessão Google expirada. Renove para sincronizar com a esposa.</span>
+              <span className="text-[11px] leading-tight">Sessão Google expirada. Renove para sincronizar com o par.</span>
             </div>
             <button
               type="button"
@@ -326,85 +432,144 @@ export default function App() {
           </div>
         )}
 
-        {/* Barra Superior do App */}
-        <header className="pt-4 pb-2 border-b border-neutral-800/80 flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base font-extrabold tracking-tight text-white flex items-center gap-1.5">
-                <span>Orçamento Londrina</span>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full border border-sky-800 bg-sky-950/80 text-sky-300 flex items-center gap-1">
+        {/* Barra Superior do App com Identidade do Casal, Seletor de Mês e Ações SaaS */}
+        <header className="pt-3.5 pb-2.5 border-b border-neutral-800/80 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleAbrirConfigSaaS('casal')}
+                  className="text-base font-extrabold tracking-tight text-white hover:text-emerald-400 transition-colors flex items-center gap-1.5 truncate"
+                  title="Personalizar nomes do casal e código de convite"
+                >
+                  <span className="truncate">{appState.config.nome_familia || 'Orçamento Londrina'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleAbrirConfigSaaS('casal')}
+                  className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border border-sky-800 bg-sky-950/80 text-sky-300 hover:bg-sky-900/70 flex items-center gap-1 transition-colors"
+                  title="Convidar par / Copiar código de vínculo"
+                >
                   <Users className="h-2.5 w-2.5" />
-                  Casal
-                </span>
-              </h1>
+                  <span>{obterRotuloQuem('Ele', appState.config)} & {obterRotuloQuem('Ela', appState.config)}</span>
+                </button>
+              </div>
+
+              {(() => {
+                const rendasExtrasMes = (appState.rendasExtras || [])
+                  .filter(r => r.mes_ref === mesAtivo)
+                  .reduce((acc, r) => acc + r.valor, 0);
+                const totalRendaMes = appState.config.renda_liquida_mensal + rendasExtrasMes;
+                return (
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Renda mês: <strong className="text-neutral-200 font-mono">{formatarMoeda(totalRendaMes)}</strong>
+                    {rendasExtrasMes > 0 && (
+                      <span className="text-emerald-400 font-bold font-mono ml-1">
+                        (+{formatarMoeda(rendasExtrasMes)})
+                      </span>
+                    )}
+                  </p>
+                );
+              })()}
+            </div>
+
+            {/* Botões de Configuração SaaS & Vitrine */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setModoTelaSaaS('landing')}
+                className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 text-[10px] font-bold text-emerald-300 transition-colors"
+                title="Ver Página de Vendas SaaS e Planos"
+              >
+                <Crown className="h-3 w-3 text-emerald-400" />
+                <span>Vitrine SaaS</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAbrirConfigSaaS('casal')}
+                className="p-1.5 rounded-lg border border-neutral-800 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+                title="Configurar Casal, Tetos, Convite e Virada de Mês"
+              >
+                <Settings className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Segunda linha do Header: Navegador de Mês (< Out/2026 >) + Sheets + Simulador de Dia */}
+          <div className="flex items-center justify-between gap-2 pt-0.5">
+            {/* Navegador de Mês */}
+            <div className="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900 px-1.5 py-0.5">
+              <button
+                type="button"
+                onClick={() => handleMudarMes(-1)}
+                className="p-1 text-neutral-400 hover:text-white transition-colors"
+                title="Mês anterior"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAbrirConfigSaaS('virar_mes')}
+                className="px-1.5 text-xs font-mono font-bold text-white hover:text-emerald-400 transition-colors"
+                title="Fechar mês ou alternar ciclo"
+              >
+                {formatarMesExibicao(mesAtivo, true)}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleMudarMes(1)}
+                className="p-1 text-neutral-400 hover:text-white transition-colors"
+                title="Próximo mês"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              {/* Botão de Status Google Sheets */}
               {obterPlanilhaConectada() ? (
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => sincronizarComPlanilha(false, true)}
-                    disabled={sincronizandoNuvem}
-                    className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded-full hover:bg-emerald-900/60 transition-all active:scale-95 disabled:opacity-50"
-                    title="Toque para atualizar agora com a planilha do casal"
-                  >
-                    <RefreshCw className={`h-2.5 w-2.5 text-emerald-400 ${sincronizandoNuvem ? 'animate-spin' : ''}`} />
-                    <span>{sincronizandoNuvem ? 'Atualizando...' : (ultimaSincronizacao ? `Sheets ${ultimaSincronizacao}` : 'Sheets')}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAbaAtiva('testes')}
-                    className="text-neutral-400 hover:text-emerald-400 p-0.5"
-                    title="Configurações e Compartilhamento com a Esposa"
-                  >
-                    <CloudCheck className="h-3.5 w-3.5 text-emerald-400" />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => sincronizarComPlanilha(false, true)}
+                  disabled={sincronizandoNuvem}
+                  className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-1 rounded-lg hover:bg-emerald-900/60 transition-all active:scale-95 disabled:opacity-50"
+                  title="Toque para atualizar agora com a planilha do casal"
+                >
+                  <RefreshCw className={`h-2.5 w-2.5 text-emerald-400 ${sincronizandoNuvem ? 'animate-spin' : ''}`} />
+                  <span>{sincronizandoNuvem ? 'Sync...' : (ultimaSincronizacao ? `Sheets ${ultimaSincronizacao}` : 'Sheets')}</span>
+                </button>
               ) : (
                 <button
                   type="button"
                   onClick={() => setAbaAtiva('testes')}
-                  className="flex items-center gap-1 text-[10px] text-neutral-400 bg-neutral-900 border border-neutral-800 hover:border-emerald-600/50 hover:text-emerald-400 px-2 py-0.5 rounded-full transition-colors"
+                  className="flex items-center gap-1 text-[10px] text-neutral-400 bg-neutral-900 border border-neutral-800 hover:border-emerald-600/50 hover:text-emerald-400 px-2 py-1 rounded-lg transition-colors"
                   title="Conectar Google Sheets"
                 >
                   <FileSpreadsheet className="h-2.5 w-2.5" />
-                  <span>Conectar</span>
+                  <span>Sheets</span>
                 </button>
               )}
-            </div>
-            {(() => {
-              const mesAtualStr = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
-              const rendasExtrasMes = (appState.rendasExtras || [])
-                .filter(r => r.mes_ref === mesAtualStr)
-                .reduce((acc, r) => acc + r.valor, 0);
-              const totalRendaMes = appState.config.renda_liquida_mensal + rendasExtrasMes;
-              return (
-                <p className="text-[11px] text-neutral-400">
-                  Renda mês: <strong className="text-neutral-200">{formatarMoeda(totalRendaMes)}</strong>
-                  {rendasExtrasMes > 0 && (
-                    <span className="text-emerald-400 font-bold ml-1">
-                      (+{formatarMoeda(rendasExtrasMes)})
-                    </span>
-                  )}
-                </p>
-              );
-            })()}
-          </div>
 
-          {/* Seletor rápido de dia para simular o mês */}
-          <div className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1">
-            <Calendar className="h-3 w-3 text-neutral-400" />
-            <span className="text-xs font-semibold text-neutral-300">Dia:</span>
-            <select
-              id="select-dia-simulado"
-              value={diaAtual}
-              onChange={e => handleSimularDia(parseInt(e.target.value, 10))}
-              className="bg-transparent text-xs font-mono font-bold text-white focus:outline-none cursor-pointer"
-            >
-              {Array.from({ length: totalDiasMes }, (_, i) => i + 1).map(d => (
-                <option key={d} value={d} className="bg-neutral-900 text-white">
-                  {d}
-                </option>
-              ))}
-            </select>
+              {/* Seletor rápido de dia para simular o mês */}
+              <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1">
+                <Calendar className="h-3 w-3 text-neutral-400" />
+                <span className="text-[11px] font-semibold text-neutral-400">Dia</span>
+                <select
+                  id="select-dia-simulado"
+                  value={diaAtual}
+                  onChange={e => handleSimularDia(parseInt(e.target.value, 10))}
+                  className="bg-transparent text-xs font-mono font-bold text-white focus:outline-none cursor-pointer"
+                >
+                  {Array.from({ length: totalDiasMes }, (_, i) => i + 1).map(d => (
+                    <option key={d} value={d} className="bg-neutral-900 text-white">
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
         </header>
 
@@ -451,6 +616,7 @@ export default function App() {
               appState={appState}
               setAppState={setAppState}
               onAcessarConselheiro={() => setAbaAtiva('conselheiro')}
+              onAbrirConfigSaaS={handleAbrirConfigSaaS}
             />
           )}
 
@@ -475,6 +641,17 @@ export default function App() {
             />
           )}
         </div>
+
+        {/* Modal Central SaaS (Casal, Link de Convite, Tetos, Virar Mês, Planos) */}
+        <GestaoCasalSaaSModal
+          aberto={modalSaaSAberto}
+          abaInicial={abaModalSaaS}
+          appState={appState}
+          setAppState={setAppState}
+          onFechar={() => setModalSaaSAberto(false)}
+          onAbrirLandingPage={() => setModoTelaSaaS('landing')}
+          onAbrirOnboardingNovo={() => setModoTelaSaaS('onboarding')}
+        />
 
         {/* Barra de Navegação Inferior Fixa (5 Abas, Mobile-First) */}
         <nav

@@ -75,6 +75,14 @@ export interface Configuracao {
   hora_resumo_diario: number;
   dia_fechamento_ciclo: string;
   webhook_n8n?: string;
+  // Campos SaaS Multi-Casal
+  nome_familia?: string;
+  nome_parceiro_1?: string;
+  nome_parceiro_2?: string;
+  codigo_casal?: string;
+  plano_assinatura?: 'trial' | 'mensal' | 'anual';
+  data_inicio_trial?: string;
+  onboarding_concluido?: boolean;
 }
 
 export interface AlertaLog {

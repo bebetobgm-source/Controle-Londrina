@@ -11,7 +11,10 @@ import {
   excluirRendaExtra,
   registrarAporteReserva,
   excluirTransacaoReserva,
-  ajustarSaldoColchao
+  ajustarSaldoColchao,
+  obterRotuloQuem,
+  filtrarLancamentosDoMes,
+  formatarMesExibicao
 } from '../services/storage';
 import {
   calcularStatusRitmo,
@@ -57,18 +60,27 @@ interface Props {
   appState: AppState;
   setAppState: React.Dispatch<React.SetStateAction<AppState>>;
   onAcessarConselheiro: () => void;
+  onAbrirConfigSaaS?: (aba: 'casal' | 'orcamento' | 'virar_mes' | 'assinatura') => void;
 }
 
-export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarConselheiro }) => {
+export const PainelDoMes: React.FC<Props> = ({
+  appState,
+  setAppState,
+  onAcessarConselheiro,
+  onAbrirConfigSaaS
+}) => {
   const agora = new Date();
   const diaAtual = appState.diaAtualSimulado || agora.getDate();
-  const totalDiasMes = new Date(agora.getFullYear(), agora.getMonth() + 1, 0).getDate();
-  const mesRefAtual = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+  const mesRefAtual = appState.mesAtivo || `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+  const [anoRefNum, mesRefNum] = mesRefAtual.split('-').map(Number);
+  const totalDiasMes = new Date(anoRefNum || agora.getFullYear(), mesRefNum || (agora.getMonth() + 1), 0).getDate();
 
-  const statusRitmo = calcularStatusRitmo(appState.lancamentos, appState.orcamento, diaAtual, totalDiasMes);
-  const categoriasRitmo = calcularRitmoPorCategorias(appState.lancamentos, appState.orcamento, diaAtual, totalDiasMes);
+  const lancamentosDoMes = filtrarLancamentosDoMes(appState.lancamentos, mesRefAtual);
+
+  const statusRitmo = calcularStatusRitmo(lancamentosDoMes, appState.orcamento, diaAtual, totalDiasMes);
+  const categoriasRitmo = calcularRitmoPorCategorias(lancamentosDoMes, appState.orcamento, diaAtual, totalDiasMes);
   const projecao = calcularProjecaoFechamento(
-    appState.lancamentos,
+    lancamentosDoMes,
     appState.orcamento,
     appState.fixas,
     appState.config,
@@ -589,10 +601,12 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
 
       {/* 2.5 LISTA TRANSPARENTE DE LANÇAMENTOS DO MÊS */}
       {(() => {
-        const totalGastoLancamentos = appState.lancamentos.reduce((acc, l) => acc + l.valor, 0);
-        const gastoEle = appState.lancamentos.filter(l => l.quem === 'Ele').reduce((acc, l) => acc + l.valor, 0);
-        const gastoEla = appState.lancamentos.filter(l => l.quem === 'Ela').reduce((acc, l) => acc + l.valor, 0);
-        const gastoConjunto = appState.lancamentos.filter(l => l.quem === 'Conjunto').reduce((acc, l) => acc + l.valor, 0);
+        const totalGastoLancamentos = lancamentosDoMes.reduce((acc, l) => acc + l.valor, 0);
+        const gastoEle = lancamentosDoMes.filter(l => l.quem === 'Ele').reduce((acc, l) => acc + l.valor, 0);
+        const gastoEla = lancamentosDoMes.filter(l => l.quem === 'Ela').reduce((acc, l) => acc + l.valor, 0);
+        const gastoConjunto = lancamentosDoMes.filter(l => l.quem === 'Conjunto').reduce((acc, l) => acc + l.valor, 0);
+        const nomeEle = obterRotuloQuem('Ele', appState.config);
+        const nomeEla = obterRotuloQuem('Ela', appState.config);
 
         return (
           <div id="card-lancamentos-recentes" className="rounded-2xl border border-neutral-800 bg-neutral-900/90 p-5 shadow-lg">
@@ -600,7 +614,7 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
               <div className="flex items-center gap-2">
                 <Receipt className="h-4 w-4 text-neutral-400" />
                 <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">
-                  Lançamentos do Mês ({appState.lancamentos.length})
+                  Lançamentos de {formatarMesExibicao(mesRefAtual, true)} ({lancamentosDoMes.length})
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -625,15 +639,15 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
             {/* Divisão dos Gastos do Casal no Mês */}
             <div className="grid grid-cols-3 gap-2 my-2.5 p-2 rounded-xl bg-neutral-950/70 border border-neutral-800 text-center">
               <div className="p-1.5 rounded-lg bg-sky-950/40 border border-sky-800/40">
-                <span className="text-[10px] font-bold text-sky-400 block">🔵 Ele</span>
+                <span className="text-[10px] font-bold text-sky-400 block truncate">🔵 {nomeEle}</span>
                 <span className="text-xs font-mono font-bold text-white">{formatarMoeda(gastoEle)}</span>
               </div>
               <div className="p-1.5 rounded-lg bg-purple-950/40 border border-purple-800/40">
-                <span className="text-[10px] font-bold text-purple-400 block">🟣 Ela</span>
+                <span className="text-[10px] font-bold text-purple-400 block truncate">🟣 {nomeEla}</span>
                 <span className="text-xs font-mono font-bold text-white">{formatarMoeda(gastoEla)}</span>
               </div>
               <div className="p-1.5 rounded-lg bg-emerald-950/40 border border-emerald-800/40">
-                <span className="text-[10px] font-bold text-emerald-400 block">🟢 Casal</span>
+                <span className="text-[10px] font-bold text-emerald-400 block truncate">🟢 Casal</span>
                 <span className="text-xs font-mono font-bold text-white">{formatarMoeda(gastoConjunto)}</span>
               </div>
             </div>
@@ -696,13 +710,13 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
           </div>
         )}
 
-        {appState.lancamentos.length === 0 ? (
+        {lancamentosDoMes.length === 0 ? (
           <div className="py-6 text-center text-xs text-neutral-500">
-            Nenhum gasto lançado ainda. Use a aba "Lançar" para registrar suas despesas.
+            Nenhum gasto lançado em {formatarMesExibicao(mesRefAtual, true)}. Use a aba "Lançar" para registrar suas despesas.
           </div>
         ) : (
           <div className="mt-2 divide-y divide-neutral-800/60 max-h-72 overflow-y-auto pr-1">
-            {appState.lancamentos.map(l => {
+            {lancamentosDoMes.map(l => {
               const isExemplo = idsExemplo.includes(l.id);
               return (
                 <div
@@ -725,12 +739,12 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
                       {l.quem === 'Ela' ? (
                         <span className="rounded-full bg-purple-950/90 border border-purple-700/80 text-purple-300 font-bold px-2 py-0.5 text-[9px] flex items-center gap-1 shadow-sm">
                           <span className="h-1.5 w-1.5 rounded-full bg-purple-400"></span>
-                          Ela
+                          {nomeEla}
                         </span>
                       ) : l.quem === 'Ele' ? (
                         <span className="rounded-full bg-sky-950/90 border border-sky-700/80 text-sky-300 font-bold px-2 py-0.5 text-[9px] flex items-center gap-1 shadow-sm">
                           <span className="h-1.5 w-1.5 rounded-full bg-sky-400"></span>
-                          Ele
+                          {nomeEle}
                         </span>
                       ) : (
                         <span className="rounded-full bg-emerald-950/90 border border-emerald-700/80 text-emerald-300 font-bold px-2 py-0.5 text-[9px] flex items-center gap-1 shadow-sm">
@@ -780,6 +794,16 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
           <span className="text-xs font-bold tracking-wider text-neutral-400 uppercase">
             Categorias Variáveis (Gasto vs. Ritmo Esperado)
           </span>
+          {onAbrirConfigSaaS && (
+            <button
+              type="button"
+              onClick={() => onAbrirConfigSaaS('orcamento')}
+              className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 hover:underline"
+            >
+              <Pencil className="h-3 w-3" />
+              <span>Editar Tetos</span>
+            </button>
+          )}
         </div>
         <p className="text-xs text-neutral-400 mb-4">
           A linha vermelha marca onde o gasto deveria estar hoje ({Math.round(statusRitmo.percentual_do_mes * 100)}% do mês).
@@ -1075,6 +1099,22 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
             </span>
           </span>
         </div>
+
+        {/* Botão Fechar Mês / Virar Ciclo */}
+        {onAbrirConfigSaaS && (
+          <div className="mt-3 pt-3 border-t border-neutral-800/80 flex items-center justify-between">
+            <span className="text-[11px] text-neutral-400">
+              Pronto para encerrar {formatarMesExibicao(mesRefAtual, true)}?
+            </span>
+            <button
+              type="button"
+              onClick={() => onAbrirConfigSaaS('virar_mes')}
+              className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-300 transition-colors"
+            >
+              Fechar Mês & Virar Ciclo →
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 7. RESERVA: Meta mensal e Saldo do Colchão */}
@@ -1442,7 +1482,7 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
                             : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
                         }`}
                       >
-                        {q}
+                        {obterRotuloQuem(q, appState.config)}
                       </button>
                     ))}
                   </div>
@@ -1638,7 +1678,7 @@ export const PainelDoMes: React.FC<Props> = ({ appState, setAppState, onAcessarC
                             : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
                         }`}
                       >
-                        {q}
+                        {obterRotuloQuem(q, appState.config)}
                       </button>
                     ))}
                   </div>

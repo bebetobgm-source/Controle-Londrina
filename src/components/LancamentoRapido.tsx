@@ -8,7 +8,8 @@ import {
   registrarRendaExtra,
   excluirRendaExtra,
   registrarAporteReserva,
-  excluirTransacaoReserva
+  excluirTransacaoReserva,
+  obterRotuloQuem
 } from '../services/storage';
 import { ESTABELECIMENTOS_SUGERIDOS, CATEGORIAS_RENDA_EXTRA, SUGESTOES_RENDA_EXTRA } from '../data/defaultData';
 import {
@@ -477,7 +478,7 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
                       : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:bg-neutral-800/60'
                   }`}
                 >
-                  {q}
+                  {obterRotuloQuem(q, appState.config)}
                 </button>
               ))}
             </div>
@@ -565,7 +566,7 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
                       : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:bg-neutral-800/60'
                   }`}
                 >
-                  {q}
+                  {obterRotuloQuem(q, appState.config)}
                 </button>
               ))}
             </div>
@@ -675,7 +676,7 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
                         : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:bg-neutral-800/60'
                     }`}
                   >
-                    {q}
+                    {obterRotuloQuem(q, appState.config)}
                   </button>
                 );
               })}

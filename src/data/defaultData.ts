@@ -18,7 +18,14 @@ export const CONFIG_PADRAO: Configuracao = {
   alertas_ativos: 'SIM',
   hora_resumo_diario: 20,
   dia_fechamento_ciclo: 'ultimo',
-  webhook_n8n: ''
+  webhook_n8n: '',
+  nome_familia: 'Família Londrina',
+  nome_parceiro_1: 'Ele',
+  nome_parceiro_2: 'Ela',
+  codigo_casal: 'CASAL-8492',
+  plano_assinatura: 'trial',
+  data_inicio_trial: new Date().toISOString().split('T')[0],
+  onboarding_concluido: true
 };
 
 export const FIXAS_PADRAO: ContaFixa[] = [
