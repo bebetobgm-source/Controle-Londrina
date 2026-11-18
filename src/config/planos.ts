@@ -1,6 +1,6 @@
-export const KIWIFY_CHECKOUT_MENSAL = 'COLE_AQUI';
-export const KIWIFY_CHECKOUT_ANUAL = 'COLE_AQUI';
-export const KIWIFY_AREA_CLIENTE = 'COLE_AQUI';
+export const KIWIFY_CHECKOUT_MENSAL = 'https://pay.kiwify.com.br/eB08x0S';
+export const KIWIFY_CHECKOUT_ANUAL = 'https://pay.kiwify.com.br/xXDFpbj';
+export const KIWIFY_AREA_CLIENTE = 'mailto:bebeto.bgm@gmail.com?subject=Gerenciar%20assinatura%20Casal%20no%20Azul';
 
 export function montarUrlCheckoutKiwify(
   plano: 'mensal' | 'anual',
