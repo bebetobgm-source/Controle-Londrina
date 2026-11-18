@@ -582,13 +582,13 @@ export default function App() {
               <Crown className="h-6 w-6" />
             </div>
             <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 block">
-              {appState.config.nome_familia || 'Orçamento do Casal'}
+              Casal no Azul • {appState.config.nome_familia || 'Orçamento do Casal'}
             </span>
             <h1 className="text-xl font-extrabold text-white">
               Seu período terminou
             </h1>
             <p className="text-xs text-neutral-300 leading-relaxed">
-              Todos os lançamentos, metas e histórico do casal continuam salvos e protegidos na nuvem. Escolha um plano abaixo para liberar o acesso imediato nos 2 celulares:
+              Todos os lançamentos, metas e histórico do casal no Casal no Azul continuam salvos e protegidos na nuvem. Escolha um plano abaixo para liberar o acesso imediato nos 2 celulares:
             </p>
           </div>
 
@@ -739,7 +739,7 @@ export default function App() {
             className="mt-2 flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-950/30 px-3 py-1.5 text-[11px] text-emerald-200"
           >
             <span>
-              Teste grátis: <strong>{infoAcesso.diasRestantesTrial} {infoAcesso.diasRestantesTrial === 1 ? 'dia restante' : 'dias restantes'}</strong>
+              Casal no Azul · Teste grátis: <strong>{infoAcesso.diasRestantesTrial} {infoAcesso.diasRestantesTrial === 1 ? 'dia restante' : 'dias restantes'}</strong>
             </span>
             <button
               type="button"
@@ -804,7 +804,7 @@ export default function App() {
                   className="text-base font-extrabold tracking-tight text-white hover:text-emerald-400 transition-colors flex items-center gap-1.5 truncate"
                   title="Personalizar nomes do casal e convite"
                 >
-                  <span className="truncate">{appState.config.nome_familia || 'Orçamento Londrina'}</span>
+                  <span className="truncate">{appState.config.nome_familia || 'Casal no Azul'}</span>
                 </button>
 
                 <button
@@ -838,16 +838,16 @@ export default function App() {
               })()}
             </div>
 
-            {/* Botões de Configuração SaaS & Vitrine */}
+            {/* Botões de Configuração & Sobre o Casal no Azul */}
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
                 onClick={() => setExibirVitrineLanding(true)}
                 className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 text-[10px] font-bold text-emerald-300 transition-colors"
-                title="Ver Página de Vendas SaaS e Planos"
+                title="Sobre o Casal no Azul"
               >
                 <Crown className="h-3 w-3 text-emerald-400" />
-                <span>Vitrine SaaS</span>
+                <span>Sobre o Casal no Azul</span>
               </button>
               <button
                 type="button"

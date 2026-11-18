@@ -66,7 +66,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
   }, [aberto, abaInicial]);
 
   // Estado Aba 1: Casal & Convite Seguro de 24 caracteres
-  const [nomeFamilia, setNomeFamilia] = useState(appState.config.nome_familia || 'Família Londrina');
+  const [nomeFamilia, setNomeFamilia] = useState(appState.config.nome_familia || 'Casal no Azul');
   const [nomeParceiro1, setNomeParceiro1] = useState(appState.config.nome_parceiro_1 || 'Ele');
   const [nomeParceiro2, setNomeParceiro2] = useState(appState.config.nome_parceiro_2 || 'Ela');
   const [gerandoConvite, setGerandoConvite] = useState(false);
@@ -136,7 +136,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
 
   const urlCompartilharWhatsApp = conviteGerado
     ? `https://wa.me/?text=${encodeURIComponent(
-        `Oi! Criei o orçamento da nossa casa (${nomeFamilia || 'Nossa Família'}) no app. Toque neste link para conectar seu celular ao meu em tempo real (válido por 48h): ${conviteGerado.link}`
+        `Oi! Criei o orçamento da nossa casa (${nomeFamilia || 'Nossa Família'}) no Casal no Azul. Toque neste link para conectar seu celular ao meu em tempo real (válido por 48h): ${conviteGerado.link}`
       )}`
     : '#';
 
@@ -250,10 +250,10 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
         <div className="flex items-center justify-between pb-3 border-b border-neutral-800 shrink-0">
           <div>
             <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 block">
-              Sincronização Cloud Firestore • {qtdMembros}/2 Membros
+              Casal no Azul • {qtdMembros}/2 Membros
             </span>
             <h3 className="text-base font-extrabold text-white">
-              {appState.config.nome_familia || 'Família Londrina'}
+              {appState.config.nome_familia || 'Casal no Azul'}
             </h3>
           </div>
           <button
@@ -301,7 +301,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
               aba === 'assinatura' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-neutral-400 hover:text-white'
             }`}
           >
-            SaaS & Conta
+            Casal no Azul
           </button>
         </div>
 
@@ -722,7 +722,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                   }}
                   className="w-full flex items-center justify-between rounded-xl border border-neutral-700 bg-neutral-950 hover:bg-neutral-800 px-4 py-3 text-xs font-bold text-white transition-colors"
                 >
-                  <span>Ver Página de Vendas (Landing Page SaaS)</span>
+                  <span>Sobre o Casal no Azul</span>
                   <ExternalLink className="h-4 w-4 text-emerald-400" />
                 </button>
 

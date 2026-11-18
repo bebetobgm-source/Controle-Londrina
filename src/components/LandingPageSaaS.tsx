@@ -48,7 +48,7 @@ export const LandingPageSaaS: React.FC<Props> = ({
             </div>
             <div>
               <span className="text-sm font-extrabold tracking-tight text-white block leading-none">
-                RitmoCasal
+                Casal no Azul
               </span>
               <span className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">
                 Orçamento Sincronizado em Nuvem
@@ -435,7 +435,7 @@ export const LandingPageSaaS: React.FC<Props> = ({
       {/* Rodapé enxuto */}
       <footer className="border-t border-neutral-900 py-8 text-center text-xs text-neutral-500">
         <div className="mx-auto max-w-5xl px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <span>RitmoCasal SaaS • Orçamento Doméstico Compartilhado em Nuvem</span>
+          <span>Casal no Azul • Orçamento Doméstico Compartilhado em Nuvem</span>
           {estaLogado && onVoltarPainelAtual && (
             <button
               type="button"
