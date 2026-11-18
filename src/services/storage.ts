@@ -962,8 +962,11 @@ export function avaliarAcessoAssinatura(
     : 0;
 
   switch (sub.status) {
-    case 'active':
-      return { temAcesso: true, diasRestantesTrial: 0, emTrial: false };
+    case 'active': {
+      const tolerancia3DiasMs = periodEndMs + 3 * 24 * 60 * 60 * 1000;
+      const ativoValido = !sub.currentPeriodEnd || agoraMs < tolerancia3DiasMs;
+      return { temAcesso: ativoValido, diasRestantesTrial: 0, emTrial: false };
+    }
     case 'trial':
       return {
         temAcesso: trialEndMs > 0 ? agoraMs < trialEndMs : false,
@@ -991,7 +994,7 @@ export function avaliarAcessoAssinatura(
 }
 
 export async function reivindicarComprasPendentesKiwify(
-  familyId?: string | null
+  _familyId?: string | null
 ): Promise<void> {
   try {
     const user = auth.currentUser;
@@ -1002,8 +1005,7 @@ export async function reivindicarComprasPendentesKiwify(
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${idToken}`
-      },
-      body: JSON.stringify({ familyId: familyId || activeFamilyId })
+      }
     });
   } catch {
     // Silencioso caso o endpoint backend não esteja acessível em modo estático

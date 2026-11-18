@@ -47,7 +47,15 @@ function obterFirebaseAdmin() {
 
 function mapearEventoKiwify(eventoRaw) {
   const ev = String(eventoRaw || '').trim().toLowerCase();
-  if (['compra_aprovada', 'paid', 'approved', 'subscription_renewed'].includes(ev)) {
+  if (
+    [
+      'compra_aprovada',
+      'order_approved',
+      'paid',
+      'approved',
+      'subscription_renewed'
+    ].includes(ev)
+  ) {
     return 'active';
   }
   if (['subscription_late', 'late'].includes(ev)) {
@@ -56,10 +64,37 @@ function mapearEventoKiwify(eventoRaw) {
   if (['subscription_canceled', 'canceled'].includes(ev)) {
     return 'canceled';
   }
-  if (['compra_reembolsada', 'refunded', 'chargeback', 'chargedback'].includes(ev)) {
+  if (
+    [
+      'compra_reembolsada',
+      'order_refunded',
+      'refunded',
+      'chargeback',
+      'chargedback'
+    ].includes(ev)
+  ) {
     return 'refunded';
   }
   return null;
+}
+
+function resolverEventoEStatusKiwify(body) {
+  const webhookEvent = String(body?.webhook_event_type || '').trim().toLowerCase();
+  const statusFromEvent = mapearEventoKiwify(webhookEvent);
+  if (statusFromEvent) {
+    return { evento: webhookEvent, statusMapeado: statusFromEvent };
+  }
+
+  const orderStatus = String(body?.order_status || '').trim().toLowerCase();
+  const statusFromOrder = mapearEventoKiwify(orderStatus);
+  if (statusFromOrder) {
+    return { evento: orderStatus, statusMapeado: statusFromOrder };
+  }
+
+  return {
+    evento: webhookEvent || orderStatus,
+    statusMapeado: null
+  };
 }
 
 function detectarPlanoKiwify(body) {
@@ -108,7 +143,8 @@ async function aplicarEventoNaAssinatura(adminDb, familyId, dadosEvento) {
     ? existente.eventosProcessados
     : [];
 
-  const chaveIdempotencia = `${dadosEvento.orderId}:${dadosEvento.evento}`;
+  const dataReferencia = String(dadosEvento.dataReferencia || '').trim();
+  const chaveIdempotencia = `${dadosEvento.orderId}:${dadosEvento.evento}:${dataReferencia}`;
   if (dadosEvento.orderId && eventosAnteriores.includes(chaveIdempotencia)) {
     return { ignoradoPorIdempotencia: true };
   }
@@ -188,12 +224,15 @@ app.post(
 
       const { adminDb } = obterFirebaseAdmin();
 
-      const evento = String(body.webhook_event_type || body.order_status || '').trim().toLowerCase();
+      const { evento, statusMapeado } = resolverEventoEStatusKiwify(body);
       const buyerEmail = String(body.Customer?.email || body.customer?.email || '').trim().toLowerCase();
       const srcFamilyId = String(body.TrackingParameters?.src || body.tracking_parameters?.src || '').trim();
       const orderId = String(body.order_id || body.id || `ord-${Date.now()}`).trim();
       const subscriptionId = String(body.Subscription?.id || body.subscription_id || '').trim();
       const proximaCobranca = body.Subscription?.next_payment || body.next_payment || null;
+      const dataReferencia = String(
+        body.Subscription?.next_payment || body.approved_date || body.updated_at || ''
+      ).trim();
 
       // Gravar sempre o corpo recebido em webhookLog/{autoId} com data para depuração
       await adminDb.collection('webhookLog').add({
@@ -205,7 +244,6 @@ app.post(
         payload: body
       });
 
-      const statusMapeado = mapearEventoKiwify(evento);
       if (!statusMapeado) {
         return res.status(200).json({ ok: true, ignored: true, reason: 'evento_nao_mapeado' });
       }
@@ -245,7 +283,8 @@ app.post(
         buyerEmail,
         orderId,
         subscriptionId,
-        evento
+        evento,
+        dataReferencia
       };
 
       if (!targetFamilyId) {
@@ -267,7 +306,7 @@ app.post(
       });
     } catch (err) {
       console.error('Erro no webhook Kiwify:', err);
-      return res.status(200).json({ ok: true, errorHandled: true });
+      return res.status(500).json({ ok: false, error: 'Erro interno ao processar webhook' });
     }
   }
 );
@@ -292,14 +331,14 @@ app.post('/api/claim', express.json(), async (req, res) => {
       return res.status(200).json({ ok: true, claimed: 0 });
     }
 
-    // Descobrir familyId do usuário
-    let familyId = req.body?.familyId ? String(req.body.familyId).trim() : null;
+    // Descobrir familyId exclusivamente a partir de users/{uid} (ignora req.body.familyId)
+    let familyId = null;
     const userRef = adminDb.collection('users').doc(uid);
     const userSnap = await userRef.get();
     if (userSnap.exists) {
       const uData = userSnap.data();
-      if (!familyId && uData?.familyId) {
-        familyId = uData.familyId;
+      if (uData?.familyId) {
+        familyId = String(uData.familyId).trim();
       }
       if (uData?.email !== email) {
         await userRef.set({ email }, { merge: true });
@@ -329,7 +368,8 @@ app.post('/api/claim', express.json(), async (req, res) => {
         buyerEmail: email,
         orderId: pData.orderId || docSnap.id,
         subscriptionId: pData.kiwifySubscriptionId || pData.subscriptionId || '',
-        evento: pData.evento || 'compra_aprovada'
+        evento: pData.evento || 'compra_aprovada',
+        dataReferencia: pData.dataReferencia || ''
       });
       await docSnap.ref.delete();
       claimedCount++;
