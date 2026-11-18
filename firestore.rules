@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() { return request.auth != null; }
+    function isMember(familyId) {
+      return signedIn() && request.auth.uid in get(/databases/$(db)/documents/families/$(familyId)).data.members;
+    }
+    function validInvite(token, familyId) {
+      let inv = get(/databases/$(db)/documents/invites/$(token)).data;
+      return inv.familyId == familyId && inv.used == false && inv.expiresAt > request.time;
+    }
+
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /families/{familyId} {
+      allow create: if signedIn() && request.resource.data.members == [request.auth.uid];
+      allow read, delete: if isMember(familyId);
+      allow update: if isMember(familyId)
+        && request.resource.data.members == resource.data.members;
+      allow update: if signedIn()
+        && !(request.auth.uid in resource.data.members)
+        && resource.data.members.size() < 2
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'conviteUsado'])
+        && request.resource.data.members == resource.data.members.concat([request.auth.uid])
+        && validInvite(request.resource.data.conviteUsado, familyId);
+
+      match /{sub}/{docId} {
+        allow read, write: if isMember(familyId);
+      }
+    }
+
+    match /invites/{token} {
+      allow get: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && isMember(request.resource.data.familyId)
+        && request.resource.data.used == false;
+      allow update: if signedIn()
+        && resource.data.used == false
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy'])
+        && request.resource.data.used == true
+        && request.resource.data.usedBy == request.auth.uid;
+    }
+  }
+}

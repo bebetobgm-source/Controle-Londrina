@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { User } from 'firebase/auth';
 import {
   carregarEstadoInicial,
   salvarEstado,
@@ -7,8 +8,18 @@ import {
   formatarMesExibicao,
   navegarMes,
   filtrarLancamentosDoMes,
-  vincularPorCodigoCasal,
-  aplicarOnboardingNovoCasal
+  aplicarOnboardingNovoCasal,
+  obterPerfilUsuarioFirestore,
+  criarFamiliaNoFirestore,
+  assinarFamiliaTempoReal,
+  consultarConviteFirestore,
+  aceitarConviteFamiliaFirestore,
+  InviteFirestoreData,
+  temDadosAntigosNoLocalStorage,
+  verificarFamiliaVaziaNoFirestore,
+  migrarDadosLocalStorageParaFirestore,
+  limparChavesAntigasLocalStorage,
+  definirFamilyIdAtivo
 } from './services/storage';
 import { LancamentoRapido } from './components/LancamentoRapido';
 import { PainelDoMes } from './components/PainelDoMes';
@@ -18,7 +29,7 @@ import { TestesECodigoView } from './components/TestesECodigoView';
 import { LandingPageSaaS } from './components/LandingPageSaaS';
 import { OnboardingCasal } from './components/OnboardingCasal';
 import { GestaoCasalSaaSModal } from './components/GestaoCasalSaaSModal';
-import { verificarAlertas, calcularStatusRitmo, formatarMoeda } from './services/engine';
+import { verificarAlertas, formatarMoeda } from './services/engine';
 import {
   PlusCircle,
   TrendingUp,
@@ -28,40 +39,75 @@ import {
   AlertTriangle,
   X,
   Calendar,
-  CloudCheck,
   RefreshCw,
   ShieldAlert,
   Users,
   ChevronLeft,
   ChevronRight,
   Settings,
-  Crown
+  Crown,
+  CloudUpload,
+  CheckCircle2
 } from 'lucide-react';
 import {
   obterPlanilhaConectada,
   salvarPlanilhaConectada,
   extrairSpreadsheetId,
-  puxarDadosCompletosDaPlanilha,
-  buscarPlanilhaNoDrive
+  puxarDadosCompletosDaPlanilha
 } from './services/googleSheets';
-import { initAuth, isTokenExpirado, renovarTokenGoogle } from './services/googleAuth';
+import {
+  initAuth,
+  observeFirebaseAuth,
+  googleSignIn,
+  googleSignOut,
+  isTokenExpirado,
+  renovarTokenGoogle
+} from './services/googleAuth';
 
 type AbaAtiva = 'lancamento' | 'painel' | 'conselheiro' | 'simulador' | 'testes';
-type ModoTelaSaaS = 'app' | 'landing' | 'onboarding';
+
+const SESSION_INVITE_KEY = 'orcamento_pending_invite_token_v1';
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>(() => carregarEstadoInicial());
   const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('lancamento');
-  const [modoTelaSaaS, setModoTelaSaaS] = useState<ModoTelaSaaS>(() => {
+
+  // Autenticação Google e Família no Firestore
+  const [authVerificado, setAuthVerificado] = useState<boolean>(false);
+  const [usuarioAtual, setUsuarioAtual] = useState<User | null>(null);
+  const [carregandoLogin, setCarregandoLogin] = useState<boolean>(false);
+  const [erroLogin, setErroLogin] = useState<string | null>(null);
+
+  const [familyId, setFamilyId] = useState<string | null>(null);
+  const [carregandoFamilia, setCarregandoFamilia] = useState<boolean>(false);
+  const [precisaOnboarding, setPrecisaOnboarding] = useState<boolean>(false);
+  const [salvandoOnboarding, setSalvandoOnboarding] = useState<boolean>(false);
+  const [membrosConectados, setMembrosConectados] = useState<string[]>([]);
+  const [exibirVitrineLanding, setExibirVitrineLanding] = useState<boolean>(false);
+
+  // Fluxo de Convite Seguro (24 caracteres)
+  const [tokenConvitePendente, setTokenConvitePendente] = useState<string | null>(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('modo') === 'vendas' || params.get('landing') === '1') return 'landing';
-    return 'app';
+    const tokenUrl = params.get('convite');
+    if (tokenUrl) {
+      sessionStorage.setItem(SESSION_INVITE_KEY, tokenUrl.trim());
+      return tokenUrl.trim();
+    }
+    return sessionStorage.getItem(SESSION_INVITE_KEY);
   });
+  const [conviteValidado, setConviteValidado] = useState<InviteFirestoreData | null>(null);
+  const [erroConviteModal, setErroConviteModal] = useState<string | null>(null);
+  const [aceitandoConvite, setAceitandoConvite] = useState<boolean>(false);
+
+  // Fluxo de Migração de Dados Antigos do localStorage
+  const [mostrarModalMigracao, setMostrarModalMigracao] = useState<boolean>(false);
+  const [migrandoDados, setMigrandoDados] = useState<boolean>(false);
+
+  // UI & Modais
   const [modalSaaSAberto, setModalSaaSAberto] = useState<boolean>(false);
   const [abaModalSaaS, setAbaModalSaaS] = useState<'casal' | 'orcamento' | 'virar_mes' | 'assinatura'>('casal');
   const [alertaCriticoDispensado, setAlertaCriticoDispensado] = useState<boolean>(false);
   const [sincronizandoNuvem, setSincronizandoNuvem] = useState<boolean>(false);
-  const [statusSincronizacao, setStatusSincronizacao] = useState<'ocioso' | 'sincronizando' | 'sincronizado'>('ocioso');
   const [isInAppBrowser, setIsInAppBrowser] = useState<boolean>(false);
   const [sessaoGoogleExpirada, setSessaoGoogleExpirada] = useState<boolean>(false);
   const [notificacaoSincronizacao, setNotificacaoSincronizacao] = useState<string | null>(null);
@@ -69,13 +115,10 @@ export default function App() {
     return localStorage.getItem('orcamento_londrina_last_sync') || null;
   });
 
-  // Função central de sincronização contínua com a planilha do casal
-  const sincronizarComPlanilha = useCallback(
-    async (silencioso = true, avisarSeNovo = true) => {
-      let planilha = obterPlanilhaConectada();
-      if (!planilha) {
-        planilha = await buscarPlanilhaNoDrive();
-      }
+  // Sincronização opcional com Google Sheets (apenas quando uma planilha está conectada)
+  const sincronizarComPlanilhaOpcional = useCallback(
+    async (silencioso = true) => {
+      const planilha = obterPlanilhaConectada();
       if (!planilha) return;
 
       if (isTokenExpirado()) {
@@ -84,51 +127,18 @@ export default function App() {
       }
 
       setSincronizandoNuvem(true);
-      setStatusSincronizacao('sincronizando');
-
       try {
         const resultado = await puxarDadosCompletosDaPlanilha(planilha.id);
         const horaAtual = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         setUltimaSincronizacao(horaAtual);
         setSessaoGoogleExpirada(false);
-        setStatusSincronizacao('sincronizado');
 
-        setAppState(prev => {
-          const nomeParceira = obterRotuloQuem('Ela', prev.config);
-          // Detectar lançamentos novos do cônjuge
-          if (avisarSeNovo && resultado.lancamentos.length > prev.lancamentos.length) {
-            const diferenca = resultado.lancamentos.length - prev.lancamentos.length;
-            const novoDaEsposa = resultado.lancamentos.find(
-              l => l.quem === 'Ela' && !prev.lancamentos.some(pl => pl.id === l.id)
-            );
-            if (novoDaEsposa) {
-              setNotificacaoSincronizacao(
-                `✨ Novo gasto de ${nomeParceira} sincronizado: ${formatarMoeda(novoDaEsposa.valor)} (${novoDaEsposa.categoria})`
-              );
-            } else {
-              setNotificacaoSincronizacao(
-                `✨ ${diferenca} novo(s) gasto(s) sincronizado(s) da planilha do casal!`
-              );
-            }
-            setTimeout(() => setNotificacaoSincronizacao(null), 5000);
-          } else if (!silencioso) {
-            setNotificacaoSincronizacao(
-              `✨ Tudo atualizado com o Sheets! (${resultado.lancamentos.length} gastos compartilhados)`
-            );
-            setTimeout(() => setNotificacaoSincronizacao(null), 3500);
-          }
-
-          const atualizado: AppState = {
-            ...prev,
-            lancamentos: resultado.lancamentos,
-            rendasExtras: resultado.rendasExtras,
-            fixas: resultado.fixas.length > 0 ? resultado.fixas : prev.fixas,
-            orcamento: resultado.orcamento && resultado.orcamento.length > 0 ? resultado.orcamento : prev.orcamento,
-            reserva: resultado.reserva && resultado.reserva.length > 0 ? resultado.reserva : prev.reserva
-          };
-          salvarEstado(atualizado);
-          return atualizado;
-        });
+        if (!silencioso) {
+          setNotificacaoSincronizacao(
+            `✨ Planilha Google Sheets sincronizada (${resultado.lancamentos.length} lançamentos)!`
+          );
+          setTimeout(() => setNotificacaoSincronizacao(null), 3500);
+        }
       } catch (err: any) {
         if (err.message?.includes('expirou') || isTokenExpirado()) {
           setSessaoGoogleExpirada(true);
@@ -144,23 +154,17 @@ export default function App() {
     []
   );
 
-  // 1. Detectar parâmetro de URL (?planilha=ID, ?sheet=ID ou ?convite=CASAL-XXXX) para conexão instantânea do par
+  // 1. Detectar parâmetro de URL (?convite=<token> ou ?planilha=<id>)
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       const sheetParam = params.get('planilha') || params.get('sheet') || params.get('sheetId');
-      const conviteParam = params.get('convite') || params.get('casal');
+      const conviteParam = params.get('convite');
 
       if (conviteParam) {
-        setAppState(prev => {
-          const { estadoAtualizado } = vincularPorCodigoCasal(conviteParam, prev);
-          return estadoAtualizado;
-        });
-        setModoTelaSaaS('app');
-        setNotificacaoSincronizacao(
-          `🔗 Conectado ao orçamento familiar (${conviteParam.toUpperCase()})!`
-        );
-        setTimeout(() => setNotificacaoSincronizacao(null), 5000);
+        const tokenLimpo = conviteParam.trim();
+        sessionStorage.setItem(SESSION_INVITE_KEY, tokenLimpo);
+        setTokenConvitePendente(tokenLimpo);
         window.history.replaceState({}, '', window.location.pathname);
       }
 
@@ -168,17 +172,15 @@ export default function App() {
         const idLimpo = extrairSpreadsheetId(sheetParam);
         if (idLimpo) {
           salvarPlanilhaConectada(idLimpo, 'Orçamento Doméstico Londrina (Casal)');
-          setNotificacaoSincronizacao('🔗 Conectado à planilha do casal! Sincronizando dados compartilhados...');
-          sincronizarComPlanilha(false, false);
           window.history.replaceState({}, '', window.location.pathname);
         }
       }
     } catch (e) {
       console.warn('Erro ao processar parâmetros da URL:', e);
     }
-  }, [sincronizarComPlanilha]);
+  }, []);
 
-  // 2. Detectar se foi aberto dentro do navegador embutido do WhatsApp ou Instagram
+  // 2. Detectar navegador embutido do WhatsApp/Instagram
   useEffect(() => {
     try {
       const ua = navigator.userAgent || navigator.vendor || (window as any).opera || '';
@@ -186,83 +188,189 @@ export default function App() {
         setIsInAppBrowser(true);
       }
     } catch {
-      // Ignora erro
+      // Ignora
     }
   }, []);
 
-  // 3. SINCRONIZAÇÃO AUTOMÁTICA INICIAL E AUTH LISTENER
+  // 3. Observar estado de autenticação do Firebase (Login obrigatório)
   useEffect(() => {
+    const unsubInit = initAuth();
+    const unsubUser = observeFirebaseAuth(user => {
+      setUsuarioAtual(user);
+      setAuthVerificado(true);
+      if (!user) {
+        setFamilyId(null);
+        definirFamilyIdAtivo(null);
+        setPrecisaOnboarding(false);
+      }
+    });
+
+    return () => {
+      unsubInit();
+      unsubUser();
+    };
+  }, []);
+
+  // 4. Quando o usuário faz login: validar convite pendente (se houver) e buscar users/{uid}
+  const validarTokenConvite = useCallback(async (token: string) => {
+    const res = await consultarConviteFirestore(token);
+    if (!res.valido || !res.convite) {
+      setErroConviteModal(res.motivoErro || 'Este convite não é mais válido.');
+      setConviteValidado(null);
+      sessionStorage.removeItem(SESSION_INVITE_KEY);
+      setTokenConvitePendente(null);
+    } else {
+      setConviteValidado(res.convite);
+      setErroConviteModal(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!usuarioAtual) return;
     let cancelado = false;
-    const unsub = initAuth(async () => {
-      if (cancelado) return;
-      sincronizarComPlanilha(true, true);
+
+    async function carregarPerfilEFamilia() {
+      setCarregandoFamilia(true);
+      try {
+        if (tokenConvitePendente) {
+          await validarTokenConvite(tokenConvitePendente);
+        }
+
+        const perfil = await obterPerfilUsuarioFirestore(usuarioAtual!.uid);
+        if (cancelado) return;
+
+        if (perfil && perfil.familyId) {
+          setFamilyId(perfil.familyId);
+          definirFamilyIdAtivo(perfil.familyId);
+          setPrecisaOnboarding(false);
+        } else {
+          setFamilyId(null);
+          definirFamilyIdAtivo(null);
+          setPrecisaOnboarding(true);
+        }
+      } catch (err) {
+        console.error('Erro ao carregar perfil no Firestore:', err);
+      } finally {
+        if (!cancelado) {
+          setCarregandoFamilia(false);
+        }
+      }
+    }
+
+    carregarPerfilEFamilia();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [usuarioAtual, tokenConvitePendente, validarTokenConvite]);
+
+  // 5. Assinar em tempo real (onSnapshot) a família ativa no Firestore e verificar migração do localStorage
+  useEffect(() => {
+    if (!usuarioAtual || !familyId) return;
+
+    let cancelado = false;
+
+    // Verificar se há dados antigos no localStorage e se a família no Firestore está vazia
+    async function checarMigracaoInicial() {
+      if (!temDadosAntigosNoLocalStorage()) return;
+      const vazia = await verificarFamiliaVaziaNoFirestore(familyId!);
+      if (!cancelado && vazia) {
+        setMostrarModalMigracao(true);
+      }
+    }
+    checarMigracaoInicial();
+
+    const unsubscribe = assinarFamiliaTempoReal(familyId, (parcial, meta) => {
+      if (meta?.members) {
+        setMembrosConectados(meta.members);
+      }
+      setAppState(prev => ({
+        ...prev,
+        ...parcial
+      }));
     });
 
     return () => {
       cancelado = true;
-      unsub();
+      unsubscribe();
     };
-  }, [sincronizarComPlanilha]);
+  }, [usuarioAtual, familyId]);
 
-  // 4. POLLING AUTOMÁTICO A CADA 20 SEGUNDOS (sincroniza despesas do cônjuge em tempo real)
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        sincronizarComPlanilha(true, true);
+  const handleEntrarComGoogle = async () => {
+    setCarregandoLogin(true);
+    setErroLogin(null);
+    try {
+      await googleSignIn(false);
+      setExibirVitrineLanding(false);
+    } catch (err: any) {
+      setErroLogin(err?.message || 'Não foi possível entrar com o Google.');
+    } finally {
+      setCarregandoLogin(false);
+    }
+  };
+
+  const handleSairConta = async () => {
+    await googleSignOut();
+    setFamilyId(null);
+    definirFamilyIdAtivo(null);
+    setExibirVitrineLanding(false);
+  };
+
+  const handleConfirmarEntradaConvite = async () => {
+    if (!conviteValidado) return;
+    setAceitandoConvite(true);
+    try {
+      const res = await aceitarConviteFamiliaFirestore(conviteValidado.token);
+      if (!res.sucesso || !res.familyId) {
+        setErroConviteModal(res.erro || 'Não foi possível entrar na família.');
+        setConviteValidado(null);
+      } else {
+        sessionStorage.removeItem(SESSION_INVITE_KEY);
+        setTokenConvitePendente(null);
+        setConviteValidado(null);
+        setFamilyId(res.familyId);
+        definirFamilyIdAtivo(res.familyId);
+        setPrecisaOnboarding(false);
+        setNotificacaoSincronizacao(
+          `🎉 Você entrou na família ${res.nomeFamilia || 'do seu par'}! Sincronização em tempo real ativada.`
+        );
+        setTimeout(() => setNotificacaoSincronizacao(null), 6000);
       }
-    }, 20000);
+    } finally {
+      setAceitandoConvite(false);
+    }
+  };
 
-    return () => clearInterval(timer);
-  }, [sincronizarComPlanilha]);
+  const handleImportarDadosLocais = async () => {
+    if (!familyId) return;
+    setMigrandoDados(true);
+    try {
+      const total = await migrarDadosLocalStorageParaFirestore(familyId);
+      setMostrarModalMigracao(false);
+      setNotificacaoSincronizacao(
+        `☁️ ${total} registro(s) importado(s) para a nuvem com sucesso! Chaves antigas removidas.`
+      );
+      setTimeout(() => setNotificacaoSincronizacao(null), 6000);
+    } catch (err) {
+      console.error('Erro na migração:', err);
+      setNotificacaoSincronizacao('Erro ao importar dados locais para a nuvem.');
+      setTimeout(() => setNotificacaoSincronizacao(null), 4000);
+    } finally {
+      setMigrandoDados(false);
+    }
+  };
 
-  // 5. SINCRONIZAR AO RETORNAR PARA O APP E ENTRE ABAS (storage listener para código do casal)
-  useEffect(() => {
-    const handleVisibilidade = () => {
-      if (document.visibilityState === 'visible') {
-        sincronizarComPlanilha(true, true);
-      }
-    };
-    const handleFoco = () => {
-      sincronizarComPlanilha(true, true);
-    };
-    const handleSyncAtualizado = () => {
-      sincronizarComPlanilha(true, false);
-    };
-    const handleExpirou = () => {
-      setSessaoGoogleExpirada(true);
-    };
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key && e.key.startsWith('orcamento_')) {
-        setAppState(carregarEstadoInicial());
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilidade);
-    window.addEventListener('focus', handleFoco);
-    window.addEventListener('orcamento-sync-updated', handleSyncAtualizado);
-    window.addEventListener('orcamento-google-sessao-expirada', handleExpirou);
-    window.addEventListener('storage', handleStorageChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilidade);
-      window.removeEventListener('focus', handleFoco);
-      window.removeEventListener('orcamento-sync-updated', handleSyncAtualizado);
-      window.removeEventListener('orcamento-google-sessao-expirada', handleExpirou);
-      window.removeEventListener('storage', handleStorageChange);
-    };
-  }, [sincronizarComPlanilha]);
-
-  // 6. SINCRONIZAR AO TROCAR DE ABA (ex: ir para o Painel)
-  useEffect(() => {
-    sincronizarComPlanilha(true, false);
-  }, [abaAtiva, sincronizarComPlanilha]);
+  const handleDescartarDadosLocais = () => {
+    limparChavesAntigasLocalStorage();
+    setMostrarModalMigracao(false);
+  };
 
   const handleRenovarSessao = async () => {
     try {
       setSincronizandoNuvem(true);
       await renovarTokenGoogle();
       setSessaoGoogleExpirada(false);
-      await sincronizarComPlanilha(false, true);
+      await sincronizarComPlanilhaOpcional(false);
     } catch (e: any) {
       console.warn('Renovação de sessão:', e);
     } finally {
@@ -280,7 +388,6 @@ export default function App() {
     return filtrarLancamentosDoMes(appState.lancamentos, mesAtivo);
   }, [appState.lancamentos, mesAtivo]);
 
-  // Verificar se há alertas ativos no mês ativo
   const alertasAtivos = useMemo(() => {
     return verificarAlertas(
       lancamentosMesAtivo,
@@ -295,7 +402,6 @@ export default function App() {
     );
   }, [lancamentosMesAtivo, appState.orcamento, appState.fixas, appState.config, appState.reserva, appState.rendasExtras, diaAtual, totalDiasMes]);
 
-  // Alerta crítico prioritário (Regra 5 ou Regra 4 ou qualquer vermelho)
   const alertaCritico = useMemo(() => {
     return alertasAtivos.find(a => a.severidade === 'vermelho' || a.tipo === 'Fixas Descobertas');
   }, [alertasAtivos]);
@@ -303,7 +409,7 @@ export default function App() {
   const handleSimularDia = (novoDia: number) => {
     setAppState(prev => {
       const atualizado = { ...prev, diaAtualSimulado: novoDia };
-      salvarEstado(atualizado);
+      salvarEstado({ diaAtualSimulado: novoDia });
       return atualizado;
     });
     setAlertaCriticoDispensado(false);
@@ -313,7 +419,7 @@ export default function App() {
     setAppState(prev => {
       const novoMes = navegarMes(prev.mesAtivo, direcao);
       const atualizado = { ...prev, mesAtivo: novoMes };
-      salvarEstado(atualizado);
+      salvarEstado({ mesAtivo: novoMes });
       return atualizado;
     });
   };
@@ -323,46 +429,144 @@ export default function App() {
     setModalSaaSAberto(true);
   };
 
-  // Se estiver na Landing Page de Vendas SaaS
-  if (modoTelaSaaS === 'landing') {
+  // Enquanto verifica sessão do Firebase Auth
+  if (!authVerificado || (usuarioAtual && carregandoFamilia && !familyId && !precisaOnboarding)) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3">
+          <RefreshCw className="h-6 w-6 text-emerald-400 animate-spin" />
+          <p className="text-xs font-mono text-neutral-400">
+            Sincronizando sua conta familiar na nuvem...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // REGRA 2: LOGIN OBRIGATÓRIO — Sem login (ou se abriu a vitrine), mostrar só a LandingPageSaaS
+  if (!usuarioAtual || exibirVitrineLanding) {
     return (
       <LandingPageSaaS
-        codigoAtual={appState.config.codigo_casal}
+        estaLogado={Boolean(usuarioAtual)}
+        carregandoLogin={carregandoLogin}
+        erroLogin={erroLogin}
+        tokenConvitePendente={tokenConvitePendente}
         nomeFamiliaAtual={appState.config.nome_familia}
-        onVoltarPainelAtual={() => setModoTelaSaaS('app')}
-        onIniciarOnboarding={() => setModoTelaSaaS('onboarding')}
-        onVincularCodigo={codigo => {
-          const { estadoAtualizado } = vincularPorCodigoCasal(codigo, appState);
-          setAppState(estadoAtualizado);
-          setModoTelaSaaS('app');
-          setNotificacaoSincronizacao(`🔗 Conectado ao orçamento do casal (${codigo})!`);
-          setTimeout(() => setNotificacaoSincronizacao(null), 4000);
+        onEntrarComGoogle={() => {
+          if (usuarioAtual) {
+            setExibirVitrineLanding(false);
+          } else {
+            handleEntrarComGoogle();
+          }
         }}
+        onVoltarPainelAtual={usuarioAtual ? () => setExibirVitrineLanding(false) : undefined}
       />
     );
   }
 
-  // Se estiver no Onboarding Guiado de 3 Passos
-  if (modoTelaSaaS === 'onboarding') {
+  // Modal prioritário de Confirmação de Convite ("Entrar na família X") ou Erro de Convite
+  if (conviteValidado || erroConviteModal) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-900 p-6 shadow-2xl space-y-4">
+          {erroConviteModal ? (
+            <>
+              <div className="flex items-center gap-2.5 text-rose-400">
+                <AlertTriangle className="h-5 w-5 shrink-0" />
+                <h2 className="text-base font-extrabold text-white">Convite Indisponível</h2>
+              </div>
+              <p className="text-xs text-neutral-300 leading-relaxed">{erroConviteModal}</p>
+              <button
+                type="button"
+                onClick={() => setErroConviteModal(null)}
+                className="w-full rounded-xl bg-neutral-800 hover:bg-neutral-700 py-3 text-xs font-extrabold text-white transition-all"
+              >
+                Continuar
+              </button>
+            </>
+          ) : conviteValidado ? (
+            <>
+              <div className="flex items-center gap-2.5 text-emerald-400">
+                <Users className="h-5 w-5 shrink-0" />
+                <div>
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 block">
+                    Convite Familiar Seguro
+                  </span>
+                  <h2 className="text-lg font-extrabold text-white">
+                    Entrar na família {conviteValidado.nomeFamilia || 'do seu par'}?
+                  </h2>
+                </div>
+              </div>
+              <p className="text-xs text-neutral-300 leading-relaxed">
+                Ao confirmar, sua conta Google (<strong>{usuarioAtual.email}</strong>) será vinculada a esta família e vocês verão todos os gastos e metas sincronizados em tempo real nos dois celulares.
+              </p>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={aceitandoConvite}
+                  onClick={() => {
+                    sessionStorage.removeItem(SESSION_INVITE_KEY);
+                    setTokenConvitePendente(null);
+                    setConviteValidado(null);
+                  }}
+                  className="rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-3 text-xs font-bold text-neutral-400 hover:text-white"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={aceitandoConvite}
+                  onClick={handleConfirmarEntradaConvite}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 py-3 text-xs font-extrabold text-neutral-950 transition-all"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>
+                    {aceitandoConvite
+                      ? 'Vinculando à família...'
+                      : `Entrar na família ${conviteValidado.nomeFamilia || ''}`}
+                  </span>
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  // REGRA 2: Depois do login, se users/{uid} não tem familyId, abrir o OnboardingCasal, que cria a família no Firestore com members: [uid]
+  if (precisaOnboarding && !familyId) {
     return (
       <OnboardingCasal
-        onCancelar={() => setModoTelaSaaS('app')}
-        onVincularCodigoExistente={codigo => {
-          const { estadoAtualizado } = vincularPorCodigoCasal(codigo, appState);
-          setAppState(estadoAtualizado);
-          setModoTelaSaaS('app');
-          setNotificacaoSincronizacao(`🔗 Celular conectado ao código ${codigo}!`);
-          setTimeout(() => setNotificacaoSincronizacao(null), 4000);
+        nomeUsuarioGoogle={usuarioAtual.displayName || undefined}
+        salvando={salvandoOnboarding}
+        onUsarTokenConvite={token => {
+          sessionStorage.setItem(SESSION_INVITE_KEY, token);
+          setTokenConvitePendente(token);
+          validarTokenConvite(token);
         }}
-        onConcluirOnboarding={dados => {
-          const novo = aplicarOnboardingNovoCasal(dados, appState);
-          setAppState(novo);
-          setModoTelaSaaS('app');
-          setAbaAtiva('painel');
-          setNotificacaoSincronizacao(
-            `🎉 Painel de ${novo.config.nome_familia} criado! Código do casal: ${novo.config.codigo_casal}`
-          );
-          setTimeout(() => setNotificacaoSincronizacao(null), 6000);
+        onConcluirOnboarding={async dados => {
+          setSalvandoOnboarding(true);
+          try {
+            const estadoInicial = aplicarOnboardingNovoCasal(dados, appState);
+            const novoFamilyId = await criarFamiliaNoFirestore(
+              usuarioAtual.uid,
+              usuarioAtual.displayName || dados.nomeParceiro1,
+              estadoInicial
+            );
+            setAppState(estadoInicial);
+            setFamilyId(novoFamilyId);
+            setPrecisaOnboarding(false);
+            setAbaAtiva('painel');
+            setNotificacaoSincronizacao(
+              `🎉 Família ${estadoInicial.config.nome_familia} criada na nuvem! Toque em "Conectar meu par" nas configurações para gerar o link.`
+            );
+            setTimeout(() => setNotificacaoSincronizacao(null), 6000);
+          } catch (err: any) {
+            setNotificacaoSincronizacao(err?.message || 'Erro ao criar família no Firestore.');
+          } finally {
+            setSalvandoOnboarding(false);
+          }
         }}
       />
     );
@@ -370,9 +574,52 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center">
+      {/* Modal de Migração dos Dados que já existem no localStorage (REGRA 5) */}
+      {mostrarModalMigracao && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl border border-emerald-500/40 bg-neutral-900 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
+                <CloudUpload className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 block">
+                  Migração para Nuvem
+                </span>
+                <h3 className="text-base font-extrabold text-white">
+                  Importar os dados deste aparelho para a nuvem?
+                </h3>
+              </div>
+            </div>
+            <p className="text-xs text-neutral-300 leading-relaxed">
+              Encontramos lançamentos e configurações salvos localmente neste celular. Deseja enviar tudo em lote para o Firestore para sincronizar com o seu par?
+            </p>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={migrandoDados}
+                onClick={handleDescartarDadosLocais}
+                className="rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-3 text-xs font-bold text-neutral-400 hover:text-white"
+              >
+                Não importar
+              </button>
+              <button
+                type="button"
+                disabled={migrandoDados}
+                onClick={handleImportarDadosLocais}
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 py-3 text-xs font-extrabold text-neutral-950 transition-all"
+              >
+                <CloudUpload className="h-4 w-4" />
+                <span>{migrandoDados ? 'Enviando lotes para nuvem...' : 'Sim, importar para a nuvem'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Container Mobile-first (390px - 440px) */}
       <main className="w-full max-w-md px-4 flex-1 flex flex-col">
-        {/* Aviso de Navegador Interno do WhatsApp/Instagram (bloqueia login Google) */}
+        {/* Aviso de Navegador Interno do WhatsApp/Instagram */}
         {isInAppBrowser && (
           <div className="mt-2 rounded-xl bg-amber-950/80 border border-amber-600/50 p-3 text-xs text-amber-200 animate-in fade-in">
             <div className="flex items-start justify-between gap-2">
@@ -397,7 +644,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Notificação Flutuante de Sincronização / Novos Gastos do Cônjuge */}
+        {/* Notificação Flutuante de Sincronização */}
         {notificacaoSincronizacao && (
           <div className="mt-2 p-2.5 rounded-xl bg-emerald-950/95 border border-emerald-500/80 text-xs text-emerald-200 flex items-center justify-between shadow-xl shadow-emerald-950/60 animate-in fade-in slide-in-from-top-2">
             <div className="flex items-center gap-2">
@@ -414,12 +661,12 @@ export default function App() {
           </div>
         )}
 
-        {/* Alerta de Sessão do Google Expirada com 1-Click Refresh */}
-        {sessaoGoogleExpirada && (
+        {/* Alerta de Sessão do Google Sheets Expirada (Opcional) */}
+        {sessaoGoogleExpirada && obterPlanilhaConectada() && (
           <div className="mt-2 p-2.5 rounded-xl bg-amber-950/90 border border-amber-700/80 flex items-center justify-between text-xs text-amber-200 animate-in fade-in">
             <div className="flex items-center gap-2">
               <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" />
-              <span className="text-[11px] leading-tight">Sessão Google expirada. Renove para sincronizar com o par.</span>
+              <span className="text-[11px] leading-tight">Sessão do Google Sheets expirada. Renove para espelhar na planilha.</span>
             </div>
             <button
               type="button"
@@ -441,7 +688,7 @@ export default function App() {
                   type="button"
                   onClick={() => handleAbrirConfigSaaS('casal')}
                   className="text-base font-extrabold tracking-tight text-white hover:text-emerald-400 transition-colors flex items-center gap-1.5 truncate"
-                  title="Personalizar nomes do casal e código de convite"
+                  title="Personalizar nomes do casal e convite"
                 >
                   <span className="truncate">{appState.config.nome_familia || 'Orçamento Londrina'}</span>
                 </button>
@@ -450,10 +697,12 @@ export default function App() {
                   type="button"
                   onClick={() => handleAbrirConfigSaaS('casal')}
                   className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border border-sky-800 bg-sky-950/80 text-sky-300 hover:bg-sky-900/70 flex items-center gap-1 transition-colors"
-                  title="Convidar par / Copiar código de vínculo"
+                  title="Conectar meu par"
                 >
                   <Users className="h-2.5 w-2.5" />
-                  <span>{obterRotuloQuem('Ele', appState.config)} & {obterRotuloQuem('Ela', appState.config)}</span>
+                  <span>
+                    {obterRotuloQuem('Ele', appState.config)} & {obterRotuloQuem('Ela', appState.config)} ({Math.min(2, Math.max(1, membrosConectados.length))}/2)
+                  </span>
                 </button>
               </div>
 
@@ -479,7 +728,7 @@ export default function App() {
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
-                onClick={() => setModoTelaSaaS('landing')}
+                onClick={() => setExibirVitrineLanding(true)}
                 className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 text-[10px] font-bold text-emerald-300 transition-colors"
                 title="Ver Página de Vendas SaaS e Planos"
               >
@@ -497,7 +746,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Segunda linha do Header: Navegador de Mês (< Out/2026 >) + Sheets + Simulador de Dia */}
+          {/* Segunda linha do Header: Navegador de Mês (< Out/2026 >) + Sheets Opcional + Simulador de Dia */}
           <div className="flex items-center justify-between gap-2 pt-0.5">
             {/* Navegador de Mês */}
             <div className="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900 px-1.5 py-0.5">
@@ -528,14 +777,14 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-1.5">
-              {/* Botão de Status Google Sheets */}
+              {/* Botão de Status Google Sheets (Opcional) */}
               {obterPlanilhaConectada() ? (
                 <button
                   type="button"
-                  onClick={() => sincronizarComPlanilha(false, true)}
+                  onClick={() => sincronizarComPlanilhaOpcional(false)}
                   disabled={sincronizandoNuvem}
                   className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-1 rounded-lg hover:bg-emerald-900/60 transition-all active:scale-95 disabled:opacity-50"
-                  title="Toque para atualizar agora com a planilha do casal"
+                  title="Espelhamento opcional com Google Sheets"
                 >
                   <RefreshCw className={`h-2.5 w-2.5 text-emerald-400 ${sincronizandoNuvem ? 'animate-spin' : ''}`} />
                   <span>{sincronizandoNuvem ? 'Sync...' : (ultimaSincronizacao ? `Sheets ${ultimaSincronizacao}` : 'Sheets')}</span>
@@ -545,7 +794,7 @@ export default function App() {
                   type="button"
                   onClick={() => setAbaAtiva('testes')}
                   className="flex items-center gap-1 text-[10px] text-neutral-400 bg-neutral-900 border border-neutral-800 hover:border-emerald-600/50 hover:text-emerald-400 px-2 py-1 rounded-lg transition-colors"
-                  title="Conectar Google Sheets"
+                  title="Conectar Google Sheets (Opcional)"
                 >
                   <FileSpreadsheet className="h-2.5 w-2.5" />
                   <span>Sheets</span>
@@ -642,15 +891,18 @@ export default function App() {
           )}
         </div>
 
-        {/* Modal Central SaaS (Casal, Link de Convite, Tetos, Virar Mês, Planos) */}
+        {/* Modal Central SaaS (Casal, Link Seguro de 24 Caracteres, Tetos, Virar Mês, Planos) */}
         <GestaoCasalSaaSModal
           aberto={modalSaaSAberto}
           abaInicial={abaModalSaaS}
+          familyId={familyId}
+          membrosConectados={membrosConectados}
+          emailUsuario={usuarioAtual.email}
           appState={appState}
           setAppState={setAppState}
           onFechar={() => setModalSaaSAberto(false)}
-          onAbrirLandingPage={() => setModoTelaSaaS('landing')}
-          onAbrirOnboardingNovo={() => setModoTelaSaaS('onboarding')}
+          onAbrirLandingPage={() => setExibirVitrineLanding(true)}
+          onSairConta={handleSairConta}
         />
 
         {/* Barra de Navegação Inferior Fixa (5 Abas, Mobile-First) */}

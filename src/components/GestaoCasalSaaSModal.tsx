@@ -5,53 +5,57 @@ import {
   Copy,
   Check,
   Share2,
-  Wallet,
   Calendar,
-  Sparkles,
   Crown,
-  ArrowRight,
-  RefreshCw,
-  KeyRound,
-  ExternalLink
+  ExternalLink,
+  Link2,
+  MessageCircle,
+  LogOut
 } from 'lucide-react';
 import {
   AppState,
   atualizarConfiguracaoCasal,
   salvarOrcamentoCompleto,
   virarMesCiclo,
-  vincularPorCodigoCasal,
   formatarMesExibicao,
-  navegarMes
+  navegarMes,
+  criarConviteParceiroFirestore
 } from '../services/storage';
 import { formatarMoeda, calcularProjecaoFechamento } from '../services/engine';
 
 interface Props {
   aberto: boolean;
   abaInicial?: 'casal' | 'orcamento' | 'virar_mes' | 'assinatura';
+  familyId: string | null;
+  membrosConectados: string[];
+  emailUsuario?: string | null;
   appState: AppState;
   setAppState: React.Dispatch<React.SetStateAction<AppState>>;
   onFechar: () => void;
   onAbrirLandingPage: () => void;
-  onAbrirOnboardingNovo: () => void;
+  onSairConta?: () => void;
 }
 
 export const GestaoCasalSaaSModal: React.FC<Props> = ({
   aberto,
   abaInicial = 'casal',
+  familyId,
+  membrosConectados,
+  emailUsuario,
   appState,
   setAppState,
   onFechar,
   onAbrirLandingPage,
-  onAbrirOnboardingNovo
+  onSairConta
 }) => {
   const [aba, setAba] = useState<'casal' | 'orcamento' | 'virar_mes' | 'assinatura'>(abaInicial);
 
-  // Estado Aba 1: Casal & Convite
+  // Estado Aba 1: Casal & Convite Seguro de 24 caracteres
   const [nomeFamilia, setNomeFamilia] = useState(appState.config.nome_familia || 'Família Londrina');
   const [nomeParceiro1, setNomeParceiro1] = useState(appState.config.nome_parceiro_1 || 'Ele');
   const [nomeParceiro2, setNomeParceiro2] = useState(appState.config.nome_parceiro_2 || 'Ela');
-  const [codigoParaVincular, setCodigoParaVincular] = useState('');
-  const [copiadoCodigo, setCopiadoCodigo] = useState(false);
+  const [gerandoConvite, setGerandoConvite] = useState(false);
+  const [conviteGerado, setConviteGerado] = useState<{ token: string; link: string; expiresAt: Date } | null>(null);
   const [copiadoLink, setCopiadoLink] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -75,9 +79,6 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
 
   if (!aberto) return null;
 
-  const codigoCasal = appState.config.codigo_casal || 'CASAL-8492';
-  const linkConviteCasal = `${window.location.origin}${window.location.pathname}?convite=${encodeURIComponent(codigoCasal)}`;
-
   const projecaoAtual = calcularProjecaoFechamento(
     appState.lancamentos.filter(l => l.mes_ref === appState.mesAtivo),
     appState.orcamento,
@@ -88,6 +89,42 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
     appState.rendasExtras
   );
   const sobraEstimada = Math.max(0, projecaoAtual.saldoRestanteAtual);
+
+  const handleGerarLinkConvite = async () => {
+    if (!familyId) {
+      setFeedback('Aguarde o carregamento da família na nuvem.');
+      return;
+    }
+    setGerandoConvite(true);
+    try {
+      const dados = await criarConviteParceiroFirestore(
+        familyId,
+        nomeFamilia.trim() || appState.config.nome_familia || 'Nossa Família'
+      );
+      setConviteGerado(dados);
+      setFeedback('🔗 Link seguro de 24 caracteres criado com validade de 48h!');
+      setTimeout(() => setFeedback(null), 4000);
+    } catch (err: any) {
+      setFeedback(err?.message || 'Erro ao gerar convite.');
+      setTimeout(() => setFeedback(null), 4000);
+    } finally {
+      setGerandoConvite(false);
+    }
+  };
+
+  const handleCopiarLink = () => {
+    if (!conviteGerado) return;
+    navigator.clipboard.writeText(conviteGerado.link);
+    setCopiadoLink(true);
+    setTimeout(() => setCopiadoLink(false), 2500);
+  };
+
+  const handleCompartilharWhatsApp = () => {
+    if (!conviteGerado) return;
+    const texto = `Oi! Criei o orçamento da nossa casa (${nomeFamilia || 'Nossa Família'}) no app. Toque neste link para conectar seu celular ao meu em tempo real (válido por 48h): ${conviteGerado.link}`;
+    const url = `https://wa.me/?text=${encodeURIComponent(texto)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
 
   const handleSalvarNomesCasal = (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,37 +137,8 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
       appState
     );
     setAppState(novo);
-    setFeedback('✨ Nomes do casal atualizados em todo o aplicativo!');
+    setFeedback('✨ Nomes do casal sincronizados na nuvem!');
     setTimeout(() => setFeedback(null), 3500);
-  };
-
-  const handleCopiarCodigo = () => {
-    navigator.clipboard.writeText(codigoCasal);
-    setCopiadoCodigo(true);
-    setTimeout(() => setCopiadoCodigo(false), 2500);
-  };
-
-  const handleCopiarLink = () => {
-    navigator.clipboard.writeText(linkConviteCasal);
-    setCopiadoLink(true);
-    setTimeout(() => setCopiadoLink(false), 2500);
-  };
-
-  const handleVincularOutroCodigo = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!codigoParaVincular.trim()) return;
-    const { estadoAtualizado, encontrouDadosNuvem } = vincularPorCodigoCasal(codigoParaVincular, appState);
-    setAppState(estadoAtualizado);
-    setNomeFamilia(estadoAtualizado.config.nome_familia || 'Nossa Família');
-    setNomeParceiro1(estadoAtualizado.config.nome_parceiro_1 || 'Ele');
-    setNomeParceiro2(estadoAtualizado.config.nome_parceiro_2 || 'Ela');
-    setCodigoParaVincular('');
-    setFeedback(
-      encontrouDadosNuvem
-        ? '🔗 Celular vinculado e sincronizado com os dados do seu par!'
-        : `🔗 Código ${codigoParaVincular.toUpperCase()} vinculado a este aparelho!`
-    );
-    setTimeout(() => setFeedback(null), 4000);
   };
 
   const handleSalvarRendaETetos = (e: React.FormEvent) => {
@@ -149,7 +157,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
     );
     estado = salvarOrcamentoCompleto(tetosEditados, estado);
     setAppState(estado);
-    setFeedback('💰 Renda mensal, metas e tetos por categoria salvos com sucesso!');
+    setFeedback('💰 Renda mensal, metas e tetos sincronizados na nuvem!');
     setTimeout(() => setFeedback(null), 3500);
   };
 
@@ -176,6 +184,8 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
     setTimeout(() => setFeedback(null), 3500);
   };
 
+  const qtdMembros = Math.min(2, Math.max(1, membrosConectados.length));
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 sm:p-4 backdrop-blur-sm animate-in fade-in">
       <div className="w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-900 p-5 shadow-2xl flex flex-col max-h-[90vh]">
@@ -183,7 +193,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
         <div className="flex items-center justify-between pb-3 border-b border-neutral-800 shrink-0">
           <div>
             <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 block">
-              Configurações da Conta Familiar
+              Sincronização Cloud Firestore • {qtdMembros}/2 Membros
             </span>
             <h3 className="text-base font-extrabold text-white">
               {appState.config.nome_familia || 'Família Londrina'}
@@ -207,7 +217,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
               aba === 'casal' ? 'bg-neutral-800 text-white shadow' : 'text-neutral-400 hover:text-white'
             }`}
           >
-            Casal & Link
+            Casal & Par
           </button>
           <button
             type="button"
@@ -234,7 +244,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
               aba === 'assinatura' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-neutral-400 hover:text-white'
             }`}
           >
-            SaaS & Plano
+            SaaS & Conta
           </button>
         </div>
 
@@ -248,38 +258,82 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
         <div className="mt-4 overflow-y-auto space-y-4 pr-1 flex-1">
           {aba === 'casal' && (
             <div className="space-y-4">
-              {/* Bloco de Convite Rápido para o Cônjuge */}
-              <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-3.5 space-y-2.5">
+              {/* Bloco de Convite Seguro (Token de 24 caracteres com validade de 48h) */}
+              <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-3.5 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-sky-300 uppercase tracking-wider flex items-center gap-1.5">
-                    <KeyRound className="h-3.5 w-3.5" />
-                    <span>Código de Vínculo do Casal</span>
+                    <Users className="h-3.5 w-3.5" />
+                    <span>Conectar Meu Par (Tempo Real)</span>
                   </span>
-                  <span className="font-mono text-sm font-black text-white bg-neutral-950 px-2.5 py-0.5 rounded border border-sky-500/40">
-                    {codigoCasal}
+                  <span
+                    className={`font-mono text-[11px] font-bold px-2 py-0.5 rounded border ${
+                      qtdMembros >= 2
+                        ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
+                        : 'bg-neutral-950 text-sky-300 border-sky-500/40'
+                    }`}
+                  >
+                    {qtdMembros}/2 conectados
                   </span>
                 </div>
-                <p className="text-[11px] text-neutral-300 leading-relaxed">
-                  Envie este link ou código para o celular do seu par. Ao abrir, os dois aparelhos ficam conectados na mesma conta familiar:
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={handleCopiarCodigo}
-                    className="flex items-center justify-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-950 hover:bg-neutral-800 py-2 text-xs font-bold text-white transition-colors"
-                  >
-                    {copiadoCodigo ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-sky-400" />}
-                    <span>{copiadoCodigo ? 'Código Copiado!' : 'Copiar Código'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCopiarLink}
-                    className="flex items-center justify-center gap-1.5 rounded-lg bg-sky-400 hover:bg-sky-300 py-2 text-xs font-extrabold text-neutral-950 transition-colors"
-                  >
-                    {copiadoLink ? <Check className="h-3.5 w-3.5" /> : <Share2 className="h-3.5 w-3.5" />}
-                    <span>{copiadoLink ? 'Link Copiado!' : 'Copiar Link Direto'}</span>
-                  </button>
-                </div>
+
+                {qtdMembros >= 2 ? (
+                  <p className="text-xs text-emerald-300 leading-relaxed">
+                    Os 2 celulares do casal já estão vinculados a esta família! Qualquer despesa lançada por um aparece no celular do outro em segundos.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-[11px] text-neutral-300 leading-relaxed">
+                      Gere um link de convite único (token criptográfico de 24 caracteres com validade de 48h) e envie para o seu par no WhatsApp:
+                    </p>
+
+                    {!conviteGerado ? (
+                      <button
+                        type="button"
+                        disabled={gerandoConvite}
+                        onClick={handleGerarLinkConvite}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-sky-400 hover:bg-sky-300 disabled:opacity-50 py-2.5 text-xs font-extrabold text-neutral-950 transition-all"
+                      >
+                        <Link2 className="h-4 w-4" />
+                        <span>{gerandoConvite ? 'Gerando convite seguro...' : 'Conectar meu par'}</span>
+                      </button>
+                    ) : (
+                      <div className="space-y-2.5 pt-1">
+                        <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-2.5">
+                          <span className="text-[10px] font-mono uppercase text-neutral-400 block mb-1">
+                            Link de convite (válido por 48h):
+                          </span>
+                          <p className="text-[11px] font-mono text-sky-300 break-all select-all">
+                            {conviteGerado.link}
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={handleCopiarLink}
+                            className="flex items-center justify-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-950 hover:bg-neutral-800 py-2.5 text-xs font-bold text-white transition-colors"
+                          >
+                            {copiadoLink ? (
+                              <Check className="h-3.5 w-3.5 text-emerald-400" />
+                            ) : (
+                              <Copy className="h-3.5 w-3.5 text-sky-400" />
+                            )}
+                            <span>{copiadoLink ? 'Link Copiado!' : 'Copiar Link'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleCompartilharWhatsApp}
+                            className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 py-2.5 text-xs font-extrabold text-neutral-950 transition-colors"
+                          >
+                            <MessageCircle className="h-3.5 w-3.5" />
+                            <span>Enviar no WhatsApp</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
 
               {/* Personalizar Nomes */}
@@ -328,28 +382,6 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                 >
                   Salvar Nomes do Casal
                 </button>
-              </form>
-
-              {/* Conectar com código de outro aparelho */}
-              <form onSubmit={handleVincularOutroCodigo} className="space-y-2 border-t border-neutral-800 pt-3">
-                <span className="text-[11px] font-semibold text-neutral-400 block">
-                  Recebeu um código do seu cônjuge? Cole abaixo:
-                </span>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="CASAL-XXXX"
-                    value={codigoParaVincular}
-                    onChange={e => setCodigoParaVincular(e.target.value.toUpperCase())}
-                    className="flex-1 rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs font-mono uppercase text-white focus:border-sky-400 focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    className="rounded-xl border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 px-3.5 py-2 text-xs font-bold text-white"
-                  >
-                    Conectar
-                  </button>
-                </div>
               </form>
             </div>
           )}
@@ -450,7 +482,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                   Encerrar {formatarMesExibicao(appState.mesAtivo, false)} → Iniciar {formatarMesExibicao(proximoMesRef, false)}
                 </h4>
                 <p className="text-xs text-neutral-400 leading-relaxed">
-                  Ao virar o mês, seus lançamentos de {formatarMesExibicao(appState.mesAtivo, true)} ficam salvos no histórico (você pode voltar usando as setas do topo) e todas as Contas Fixas reabrem como "A vencer" para o novo mês.
+                  Ao virar o mês, seus lançamentos de {formatarMesExibicao(appState.mesAtivo, true)} ficam salvos no histórico na nuvem e todas as Contas Fixas reabrem como "A vencer" para o novo mês.
                 </p>
               </div>
 
@@ -503,8 +535,13 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                   </span>
                 </div>
                 <p className="text-xs text-neutral-300 leading-relaxed">
-                  Sua assinatura cobre os 2 celulares do casal com sincronização em nuvem e espelhamento em planilha Google Sheets.
+                  Sua assinatura cobre os 2 celulares do casal com sincronização em tempo real no Firestore e espelhamento opcional em planilha Google Sheets.
                 </p>
+                {emailUsuario && (
+                  <p className="text-[11px] font-mono text-neutral-400 pt-1 border-t border-emerald-500/20">
+                    Conta Google conectada: <strong className="text-white">{emailUsuario}</strong>
+                  </p>
+                )}
               </div>
 
               {/* Alternar Planos */}
@@ -538,15 +575,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                 </button>
               </div>
 
-              {/* Ferramentas de Demonstração Comercial (Vitrine SaaS) */}
               <div className="border-t border-neutral-800 pt-3 space-y-2.5">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 block">
-                  Modo Vitrine Comercial (Pronto para Venda)
-                </span>
-                <p className="text-[11px] text-neutral-400 leading-relaxed">
-                  Visualize como novos casais clientes verão a página de vendas e o fluxo de cadastro de novos assinantes:
-                </p>
-
                 <button
                   type="button"
                   onClick={() => {
@@ -555,21 +584,23 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                   }}
                   className="w-full flex items-center justify-between rounded-xl border border-neutral-700 bg-neutral-950 hover:bg-neutral-800 px-4 py-3 text-xs font-bold text-white transition-colors"
                 >
-                  <span>Abrir Página de Vendas (Landing Page SaaS)</span>
+                  <span>Ver Página de Vendas (Landing Page SaaS)</span>
                   <ExternalLink className="h-4 w-4 text-emerald-400" />
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    onFechar();
-                    onAbrirOnboardingNovo();
-                  }}
-                  className="w-full flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-950 hover:bg-neutral-800 px-4 py-3 text-xs font-semibold text-neutral-300 transition-colors"
-                >
-                  <span>Simular Cadastro de Novo Casal (Onboarding 3 Passos)</span>
-                  <ArrowRight className="h-4 w-4 text-sky-400" />
-                </button>
+                {onSairConta && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onFechar();
+                      onSairConta();
+                    }}
+                    className="w-full flex items-center justify-between rounded-xl border border-rose-900/60 bg-rose-950/30 hover:bg-rose-950/60 px-4 py-3 text-xs font-bold text-rose-300 transition-colors"
+                  >
+                    <span>Sair da Conta Google neste aparelho</span>
+                    <LogOut className="h-4 w-4 text-rose-400" />
+                  </button>
+                )}
               </div>
             </div>
           )}

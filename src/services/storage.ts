@@ -1,4 +1,17 @@
 import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  writeBatch,
+  Timestamp,
+  Unsubscribe
+} from 'firebase/firestore';
+import {
   Lancamento,
   RendaExtra,
   ContaFixa,
@@ -18,8 +31,10 @@ import {
   LANCAMENTOS_INICIAIS
 } from '../data/defaultData';
 import { avaliarAlertas } from './engine';
+import { db, auth, handleFirestoreError, OperationType } from './googleAuth';
 
-const STORAGE_KEYS = {
+// Chaves legadas (usadas apenas para detectar/migrar dados antigos e depois apagadas)
+const LEGACY_STORAGE_KEYS = {
   LANCAMENTOS: 'orcamento_londrina_lancamentos_v1',
   RENDAS_EXTRAS: 'orcamento_londrina_rendas_extras_v1',
   FIXAS: 'orcamento_londrina_fixas_v1',
@@ -28,11 +43,25 @@ const STORAGE_KEYS = {
   RESERVA: 'orcamento_londrina_reserva_v1',
   CONFIG: 'orcamento_londrina_config_v1',
   ALERTAS_LOG: 'orcamento_londrina_alertas_log_v1',
-  ULTIMO_QUEM: 'orcamento_londrina_ultimo_quem_v1',
-  SIMULACAO_DIA: 'orcamento_londrina_simulacao_dia_v1',
-  MES_ATIVO: 'orcamento_londrina_mes_ativo_v1',
-  CLOUD_CASAL_PREFIX: 'orcamento_saas_casal_v1_'
+  MES_ATIVO: 'orcamento_londrina_mes_ativo_v1'
 };
+
+// Preferências exclusivas deste aparelho
+const DEVICE_PREF_KEYS = {
+  ULTIMO_QUEM: 'orcamento_londrina_ultimo_quem_v1',
+  SIMULACAO_DIA: 'orcamento_londrina_simulacao_dia_v1'
+};
+
+// ID da família ativa na sessão do Firestore
+let activeFamilyId: string | null = null;
+
+export function definirFamilyIdAtivo(familyId: string | null) {
+  activeFamilyId = familyId;
+}
+
+export function obterFamilyIdAtivo(): string | null {
+  return activeFamilyId;
+}
 
 export function obterMesAtualPadrao(): string {
   const agora = new Date();
@@ -53,75 +82,46 @@ export interface AppState {
   mesAtivo: string; // AAAA-MM
 }
 
+function fixIdFromDescricao(descricao: string): string {
+  const slug = descricao
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+  return `fixa-${slug || 'conta'}`;
+}
+
 export function carregarEstado(): AppState {
   try {
-    const rawLancamentos = localStorage.getItem(STORAGE_KEYS.LANCAMENTOS);
-    const rawRendasExtras = localStorage.getItem(STORAGE_KEYS.RENDAS_EXTRAS);
-    const rawFixas = localStorage.getItem(STORAGE_KEYS.FIXAS);
-    const rawOrcamento = localStorage.getItem(STORAGE_KEYS.ORCAMENTO);
-    const rawCategorias = localStorage.getItem(STORAGE_KEYS.CATEGORIAS);
-    const rawReserva = localStorage.getItem(STORAGE_KEYS.RESERVA);
-    const rawConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
-    const rawAlertas = localStorage.getItem(STORAGE_KEYS.ALERTAS_LOG);
-    const rawQuem = localStorage.getItem(STORAGE_KEYS.ULTIMO_QUEM) as Quem | null;
-    const rawDia = localStorage.getItem(STORAGE_KEYS.SIMULACAO_DIA);
-    const rawMesAtivo = localStorage.getItem(STORAGE_KEYS.MES_ATIVO);
-
-    const lancamentos = rawLancamentos ? JSON.parse(rawLancamentos) : [...LANCAMENTOS_INICIAIS];
-    const rendasExtras = rawRendasExtras ? JSON.parse(rawRendasExtras) : [];
-    const fixas = rawFixas ? JSON.parse(rawFixas) : [...FIXAS_PADRAO];
-    let orcamento = rawOrcamento ? JSON.parse(rawOrcamento) : [...ORCAMENTO_PADRAO];
-    let categorias = rawCategorias ? JSON.parse(rawCategorias) : [...CATEGORIAS_PADRAO];
-
-    // Garantir que Alimentação Fora esteja presente mesmo para quem já abriu o app antes
-    if (!categorias.some((c: any) => c.categoria === 'Alimentação Fora')) {
-      const novas = CATEGORIAS_PADRAO.filter(c => c.categoria === 'Alimentação Fora');
-      categorias = [...novas, ...categorias];
-      localStorage.setItem(STORAGE_KEYS.CATEGORIAS, JSON.stringify(categorias));
-    }
-    if (!orcamento.some((o: any) => o.categoria === 'Alimentação Fora')) {
-      orcamento = [
-        ...orcamento,
-        { mes_ref: 'atual', categoria: 'Alimentação Fora', teto: 250, tipo: 'Variável' }
-      ];
-      localStorage.setItem(STORAGE_KEYS.ORCAMENTO, JSON.stringify(orcamento));
-    }
-
-    const reserva = rawReserva ? JSON.parse(rawReserva) : [...RESERVA_INICIAL];
-    const parsedConfig = rawConfig ? JSON.parse(rawConfig) : {};
-    const config: Configuracao = {
-      ...CONFIG_PADRAO,
-      ...parsedConfig,
-      nome_familia: parsedConfig.nome_familia || CONFIG_PADRAO.nome_familia || 'Família Londrina',
-      nome_parceiro_1: parsedConfig.nome_parceiro_1 || CONFIG_PADRAO.nome_parceiro_1 || 'Ele',
-      nome_parceiro_2: parsedConfig.nome_parceiro_2 || CONFIG_PADRAO.nome_parceiro_2 || 'Ela',
-      codigo_casal: parsedConfig.codigo_casal || CONFIG_PADRAO.codigo_casal || 'CASAL-8492',
-      plano_assinatura: parsedConfig.plano_assinatura || 'trial',
-      data_inicio_trial: parsedConfig.data_inicio_trial || new Date().toISOString().split('T')[0],
-      onboarding_concluido: parsedConfig.onboarding_concluido ?? true
-    };
-    const alertasLog = rawAlertas ? JSON.parse(rawAlertas) : [];
-    const ultimoQuem = rawQuem || 'Ele';
-    const diaAtualSimulado = rawDia ? parseInt(rawDia, 10) : null;
-    const mesAtivo = rawMesAtivo || obterMesAtualPadrao();
+    const rawQuem = localStorage.getItem(DEVICE_PREF_KEYS.ULTIMO_QUEM) as Quem | null;
+    const rawDia = localStorage.getItem(DEVICE_PREF_KEYS.SIMULACAO_DIA);
 
     return {
-      lancamentos,
-      rendasExtras,
-      fixas,
-      orcamento,
-      categorias,
-      reserva,
-      config,
-      alertasLog,
-      ultimoQuem,
-      diaAtualSimulado,
-      mesAtivo
+      lancamentos: [],
+      rendasExtras: [],
+      fixas: [...FIXAS_PADRAO],
+      orcamento: [...ORCAMENTO_PADRAO],
+      categorias: [...CATEGORIAS_PADRAO],
+      reserva: [...RESERVA_INICIAL],
+      config: {
+        ...CONFIG_PADRAO,
+        nome_familia: CONFIG_PADRAO.nome_familia || 'Família Londrina',
+        nome_parceiro_1: CONFIG_PADRAO.nome_parceiro_1 || 'Ele',
+        nome_parceiro_2: CONFIG_PADRAO.nome_parceiro_2 || 'Ela',
+        plano_assinatura: 'trial',
+        data_inicio_trial: new Date().toISOString().split('T')[0],
+        onboarding_concluido: true
+      },
+      alertasLog: [],
+      ultimoQuem: rawQuem || 'Ele',
+      diaAtualSimulado: rawDia ? parseInt(rawDia, 10) : null,
+      mesAtivo: obterMesAtualPadrao()
     };
   } catch (err) {
-    console.error('Erro ao ler do storage local:', err);
+    console.error('Erro ao inicializar estado:', err);
     return {
-      lancamentos: [...LANCAMENTOS_INICIAIS],
+      lancamentos: [],
       rendasExtras: [],
       fixas: [...FIXAS_PADRAO],
       orcamento: [...ORCAMENTO_PADRAO],
@@ -136,68 +136,32 @@ export function carregarEstado(): AppState {
   }
 }
 
+export const carregarEstadoInicial = carregarEstado;
+
+/**
+ * Salva apenas preferências locais do aparelho no localStorage.
+ * Os dados financeiros da família têm o Firestore como fonte da verdade.
+ */
 export function salvarEstado(estado: Partial<AppState>) {
   try {
-    if (estado.lancamentos !== undefined) {
-      localStorage.setItem(STORAGE_KEYS.LANCAMENTOS, JSON.stringify(estado.lancamentos));
-    }
-    if (estado.rendasExtras !== undefined) {
-      localStorage.setItem(STORAGE_KEYS.RENDAS_EXTRAS, JSON.stringify(estado.rendasExtras));
-    }
-    if (estado.fixas !== undefined) {
-      localStorage.setItem(STORAGE_KEYS.FIXAS, JSON.stringify(estado.fixas));
-    }
-    if (estado.orcamento !== undefined) {
-      localStorage.setItem(STORAGE_KEYS.ORCAMENTO, JSON.stringify(estado.orcamento));
-    }
-    if (estado.categorias !== undefined) {
-      localStorage.setItem(STORAGE_KEYS.CATEGORIAS, JSON.stringify(estado.categorias));
-    }
-    if (estado.reserva !== undefined) {
-      localStorage.setItem(STORAGE_KEYS.RESERVA, JSON.stringify(estado.reserva));
-    }
-    if (estado.config !== undefined) {
-      localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(estado.config));
-    }
-    if (estado.alertasLog !== undefined) {
-      localStorage.setItem(STORAGE_KEYS.ALERTAS_LOG, JSON.stringify(estado.alertasLog));
-    }
     if (estado.ultimoQuem !== undefined) {
-      localStorage.setItem(STORAGE_KEYS.ULTIMO_QUEM, estado.ultimoQuem);
+      localStorage.setItem(DEVICE_PREF_KEYS.ULTIMO_QUEM, estado.ultimoQuem);
     }
     if (estado.diaAtualSimulado !== undefined) {
       if (estado.diaAtualSimulado === null) {
-        localStorage.removeItem(STORAGE_KEYS.SIMULACAO_DIA);
+        localStorage.removeItem(DEVICE_PREF_KEYS.SIMULACAO_DIA);
       } else {
-        localStorage.setItem(STORAGE_KEYS.SIMULACAO_DIA, String(estado.diaAtualSimulado));
+        localStorage.setItem(DEVICE_PREF_KEYS.SIMULACAO_DIA, String(estado.diaAtualSimulado));
       }
     }
-    if (estado.mesAtivo !== undefined) {
-      localStorage.setItem(STORAGE_KEYS.MES_ATIVO, estado.mesAtivo);
-    }
-
-    // Espelhar no snapshot por código do casal para permitir vínculo imediato por código/link
-    const codigo = estado.config?.codigo_casal || JSON.parse(localStorage.getItem(STORAGE_KEYS.CONFIG) || '{}')?.codigo_casal;
-    if (codigo) {
-      try {
-        const snapshotAtual = JSON.parse(localStorage.getItem(STORAGE_KEYS.CLOUD_CASAL_PREFIX + codigo) || '{}');
-        const novoSnapshot = {
-          ...snapshotAtual,
-          ...(estado.lancamentos !== undefined ? { lancamentos: estado.lancamentos } : {}),
-          ...(estado.rendasExtras !== undefined ? { rendasExtras: estado.rendasExtras } : {}),
-          ...(estado.fixas !== undefined ? { fixas: estado.fixas } : {}),
-          ...(estado.orcamento !== undefined ? { orcamento: estado.orcamento } : {}),
-          ...(estado.reserva !== undefined ? { reserva: estado.reserva } : {}),
-          ...(estado.config !== undefined ? { config: estado.config } : {}),
-          atualizadoEm: new Date().toISOString()
-        };
-        localStorage.setItem(STORAGE_KEYS.CLOUD_CASAL_PREFIX + codigo, JSON.stringify(novoSnapshot));
-      } catch {
-        // Ignora erro de cota
-      }
+    if (activeFamilyId && estado.mesAtivo !== undefined) {
+      const famPath = `families/${activeFamilyId}`;
+      updateDoc(doc(db, 'families', activeFamilyId), {
+        mesAtivo: estado.mesAtivo
+      }).catch(err => handleFirestoreError(err, OperationType.UPDATE, famPath));
     }
   } catch (err) {
-    console.error('Erro ao salvar no storage local:', err);
+    console.error('Erro ao salvar preferências do aparelho:', err);
   }
 }
 
@@ -208,7 +172,7 @@ export function registrarLancamento(
   const agora = new Date();
   const id = `lan-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const mesRef = estadoAtual.mesAtivo || (novo.data ? novo.data.substring(0, 7) : obterMesAtualPadrao());
-  
+
   const lancamentoCompleto: Lancamento = {
     ...novo,
     id,
@@ -217,7 +181,7 @@ export function registrarLancamento(
   };
 
   const novosLancamentos = [lancamentoCompleto, ...estadoAtual.lancamentos];
-  
+
   // Avaliar alertas com o novo lançamento
   const diaAvaliacao = estadoAtual.diaAtualSimulado || agora.getDate();
   const alertas = avaliarAlertas(
@@ -232,7 +196,6 @@ export function registrarLancamento(
     estadoAtual.rendasExtras
   );
 
-  // Aba Alertas_Log: Nunca sobrescreva, sempre acrescente
   const alertasAtualizados = [...alertas, ...estadoAtual.alertasLog];
 
   const novoEstado: AppState = {
@@ -242,14 +205,37 @@ export function registrarLancamento(
     ultimoQuem: novo.quem
   };
 
-  salvarEstado(novoEstado);
+  salvarEstado({ ultimoQuem: novo.quem });
+
+  if (activeFamilyId) {
+    const lanPath = `families/${activeFamilyId}/lancamentos/${id}`;
+    setDoc(doc(db, 'families', activeFamilyId, 'lancamentos', id), lancamentoCompleto).catch(err =>
+      handleFirestoreError(err, OperationType.WRITE, lanPath)
+    );
+    alertas.forEach(alerta => {
+      const alertaId = alerta.id || `alerta-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const alertaPath = `families/${activeFamilyId}/alertas/${alertaId}`;
+      setDoc(doc(db, 'families', activeFamilyId!, 'alertas', alertaId), {
+        ...alerta,
+        id: alertaId
+      }).catch(err => handleFirestoreError(err, OperationType.WRITE, alertaPath));
+    });
+  }
+
   return { estadoAtualizado: novoEstado, novoId: id, alertasDisparados: alertas };
 }
 
 export function excluirLancamento(id: string, estadoAtual: AppState): AppState {
   const filtrados = estadoAtual.lancamentos.filter(l => l.id !== id);
   const novoEstado = { ...estadoAtual, lancamentos: filtrados };
-  salvarEstado(novoEstado);
+
+  if (activeFamilyId) {
+    const lanPath = `families/${activeFamilyId}/lancamentos/${id}`;
+    deleteDoc(doc(db, 'families', activeFamilyId, 'lancamentos', id)).catch(err =>
+      handleFirestoreError(err, OperationType.DELETE, lanPath)
+    );
+  }
+
   return novoEstado;
 }
 
@@ -264,41 +250,67 @@ export function limparLancamentosDeExemplo(estadoAtual: AppState): AppState {
     'antissensibilizante crianca'
   ];
 
+  const removidos: string[] = [];
   const filtrados = estadoAtual.lancamentos.filter(l => {
-    if (idsExemplo.has(l.id)) return false;
+    if (idsExemplo.has(l.id)) {
+      removidos.push(l.id);
+      return false;
+    }
     const est = (l.estabelecimento || '').toLowerCase();
     const obs = (l.observacao || '').toLowerCase();
     if (nomesExemplo.some(termo => est.includes(termo) || obs.includes(termo))) {
+      removidos.push(l.id);
       return false;
     }
     return true;
   });
 
-  const novoEstado = { ...estadoAtual, lancamentos: filtrados };
-  salvarEstado(novoEstado);
-  return novoEstado;
+  if (activeFamilyId && removidos.length > 0) {
+    const famId = activeFamilyId;
+    removidos.forEach(id => {
+      deleteDoc(doc(db, 'families', famId, 'lancamentos', id)).catch(err =>
+        handleFirestoreError(err, OperationType.DELETE, `families/${famId}/lancamentos/${id}`)
+      );
+    });
+  }
+
+  return { ...estadoAtual, lancamentos: filtrados };
 }
 
 export function limparTodosLancamentos(estadoAtual: AppState): AppState {
-  const novoEstado = { ...estadoAtual, lancamentos: [] };
-  salvarEstado(novoEstado);
-  return novoEstado;
+  if (activeFamilyId) {
+    const famId = activeFamilyId;
+    estadoAtual.lancamentos.forEach(l => {
+      deleteDoc(doc(db, 'families', famId, 'lancamentos', l.id)).catch(err =>
+        handleFirestoreError(err, OperationType.DELETE, `families/${famId}/lancamentos/${l.id}`)
+      );
+    });
+  }
+  return { ...estadoAtual, lancamentos: [] };
 }
 
 export function alternarStatusContaFixa(descricao: string, estadoAtual: AppState): AppState {
   const mesRefAtual = estadoAtual.mesAtivo || obterMesAtualPadrao();
+  let contaModificada: ContaFixa | null = null;
 
   const novasFixas = estadoAtual.fixas.map(f => {
     if (f.descricao === descricao) {
       const novoPago = f.pago_mes_ref === mesRefAtual ? '' : mesRefAtual;
-      return { ...f, pago_mes_ref: novoPago };
+      contaModificada = { ...f, pago_mes_ref: novoPago };
+      return contaModificada;
     }
     return f;
   });
 
-  const novoEstado = { ...estadoAtual, fixas: novasFixas };
-  salvarEstado(novoEstado);
-  return novoEstado;
+  if (activeFamilyId && contaModificada) {
+    const fixId = fixIdFromDescricao(descricao);
+    const fixPath = `families/${activeFamilyId}/fixas/${fixId}`;
+    setDoc(doc(db, 'families', activeFamilyId, 'fixas', fixId), contaModificada).catch(err =>
+      handleFirestoreError(err, OperationType.WRITE, fixPath)
+    );
+  }
+
+  return { ...estadoAtual, fixas: novasFixas };
 }
 
 export function atualizarContaFixa(
@@ -306,15 +318,29 @@ export function atualizarContaFixa(
   dadosAtualizados: Partial<ContaFixa>,
   estadoAtual: AppState
 ): AppState {
+  let contaFinal: ContaFixa | null = null;
   const novasFixas = estadoAtual.fixas.map(f => {
     if (f.descricao === descricaoOriginal) {
-      return { ...f, ...dadosAtualizados };
+      contaFinal = { ...f, ...dadosAtualizados };
+      return contaFinal;
     }
     return f;
   });
-  const novoEstado = { ...estadoAtual, fixas: novasFixas };
-  salvarEstado(novoEstado);
-  return novoEstado;
+
+  if (activeFamilyId && contaFinal) {
+    const oldId = fixIdFromDescricao(descricaoOriginal);
+    const newId = fixIdFromDescricao((contaFinal as ContaFixa).descricao);
+    if (oldId !== newId) {
+      deleteDoc(doc(db, 'families', activeFamilyId, 'fixas', oldId)).catch(err =>
+        handleFirestoreError(err, OperationType.DELETE, `families/${activeFamilyId}/fixas/${oldId}`)
+      );
+    }
+    setDoc(doc(db, 'families', activeFamilyId, 'fixas', newId), contaFinal).catch(err =>
+      handleFirestoreError(err, OperationType.WRITE, `families/${activeFamilyId}/fixas/${newId}`)
+    );
+  }
+
+  return { ...estadoAtual, fixas: novasFixas };
 }
 
 export function adicionarContaFixa(
@@ -323,9 +349,15 @@ export function adicionarContaFixa(
 ): AppState {
   const filtradas = estadoAtual.fixas.filter(f => f.descricao.toLowerCase() !== novaConta.descricao.toLowerCase());
   const novasFixas = [...filtradas, novaConta];
-  const novoEstado = { ...estadoAtual, fixas: novasFixas };
-  salvarEstado(novoEstado);
-  return novoEstado;
+
+  if (activeFamilyId) {
+    const fixId = fixIdFromDescricao(novaConta.descricao);
+    setDoc(doc(db, 'families', activeFamilyId, 'fixas', fixId), novaConta).catch(err =>
+      handleFirestoreError(err, OperationType.WRITE, `families/${activeFamilyId}/fixas/${fixId}`)
+    );
+  }
+
+  return { ...estadoAtual, fixas: novasFixas };
 }
 
 export function excluirContaFixa(
@@ -333,9 +365,15 @@ export function excluirContaFixa(
   estadoAtual: AppState
 ): AppState {
   const novasFixas = estadoAtual.fixas.filter(f => f.descricao !== descricao);
-  const novoEstado = { ...estadoAtual, fixas: novasFixas };
-  salvarEstado(novoEstado);
-  return novoEstado;
+
+  if (activeFamilyId) {
+    const fixId = fixIdFromDescricao(descricao);
+    deleteDoc(doc(db, 'families', activeFamilyId, 'fixas', fixId)).catch(err =>
+      handleFirestoreError(err, OperationType.DELETE, `families/${activeFamilyId}/fixas/${fixId}`)
+    );
+  }
+
+  return { ...estadoAtual, fixas: novasFixas };
 }
 
 export function registrarRendaExtra(
@@ -343,9 +381,7 @@ export function registrarRendaExtra(
   estadoAtual: AppState
 ): { estadoAtualizado: AppState; novoId: string } {
   const agora = new Date();
-  const mesRefAtual = estadoAtual.mesAtivo || (dados.data
-    ? dados.data.substring(0, 7)
-    : obterMesAtualPadrao());
+  const mesRefAtual = estadoAtual.mesAtivo || (dados.data ? dados.data.substring(0, 7) : obterMesAtualPadrao());
 
   const novoId = `rec-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const novaRenda: RendaExtra = {
@@ -362,7 +398,15 @@ export function registrarRendaExtra(
     ultimoQuem: dados.quem
   };
 
-  salvarEstado(novoEstado);
+  salvarEstado({ ultimoQuem: dados.quem });
+
+  if (activeFamilyId) {
+    const recPath = `families/${activeFamilyId}/rendasExtras/${novoId}`;
+    setDoc(doc(db, 'families', activeFamilyId, 'rendasExtras', novoId), novaRenda).catch(err =>
+      handleFirestoreError(err, OperationType.WRITE, recPath)
+    );
+  }
+
   return { estadoAtualizado: novoEstado, novoId };
 }
 
@@ -371,9 +415,15 @@ export function excluirRendaExtra(
   estadoAtual: AppState
 ): AppState {
   const filtradas = (estadoAtual.rendasExtras || []).filter(r => r.id !== id);
-  const novoEstado = { ...estadoAtual, rendasExtras: filtradas };
-  salvarEstado(novoEstado);
-  return novoEstado;
+
+  if (activeFamilyId) {
+    const recPath = `families/${activeFamilyId}/rendasExtras/${id}`;
+    deleteDoc(doc(db, 'families', activeFamilyId, 'rendasExtras', id)).catch(err =>
+      handleFirestoreError(err, OperationType.DELETE, recPath)
+    );
+  }
+
+  return { ...estadoAtual, rendasExtras: filtradas };
 }
 
 export function atualizarTetoOrcamento(categoria: string, novoTeto: number, estadoAtual: AppState): AppState {
@@ -384,9 +434,14 @@ export function atualizarTetoOrcamento(categoria: string, novoTeto: number, esta
     return item;
   });
 
-  const novoEstado = { ...estadoAtual, orcamento: novoOrcamento };
-  salvarEstado(novoEstado);
-  return novoEstado;
+  if (activeFamilyId) {
+    const famPath = `families/${activeFamilyId}`;
+    updateDoc(doc(db, 'families', activeFamilyId), { orcamento: novoOrcamento }).catch(err =>
+      handleFirestoreError(err, OperationType.UPDATE, famPath)
+    );
+  }
+
+  return { ...estadoAtual, orcamento: novoOrcamento };
 }
 
 /**
@@ -427,7 +482,13 @@ export function registrarAporteReserva(
     reserva: novaReserva
   };
 
-  salvarEstado(estadoAtualizado);
+  if (activeFamilyId) {
+    const resPath = `families/${activeFamilyId}/reserva/${novaTransacao.id}`;
+    setDoc(doc(db, 'families', activeFamilyId, 'reserva', novaTransacao.id), novaTransacao).catch(err =>
+      handleFirestoreError(err, OperationType.WRITE, resPath)
+    );
+  }
+
   return { estadoAtualizado, novaTransacao };
 }
 
@@ -442,12 +503,22 @@ export function excluirTransacaoReserva(id: string, estadoAtual: AppState): AppS
     return { ...r, saldo_acumulado: Math.max(0, saldo) };
   });
 
-  const novoEstado: AppState = {
+  if (activeFamilyId) {
+    const famId = activeFamilyId;
+    deleteDoc(doc(db, 'families', famId, 'reserva', id)).catch(err =>
+      handleFirestoreError(err, OperationType.DELETE, `families/${famId}/reserva/${id}`)
+    );
+    recalculadas.forEach(r => {
+      setDoc(doc(db, 'families', famId, 'reserva', r.id), r).catch(err =>
+        handleFirestoreError(err, OperationType.WRITE, `families/${famId}/reserva/${r.id}`)
+      );
+    });
+  }
+
+  return {
     ...estadoAtual,
     reserva: recalculadas
   };
-  salvarEstado(novoEstado);
-  return novoEstado;
 }
 
 /**
@@ -483,7 +554,13 @@ export function ajustarSaldoColchao(
     reserva: novaReserva
   };
 
-  salvarEstado(estadoAtualizado);
+  if (activeFamilyId) {
+    const resPath = `families/${activeFamilyId}/reserva/${transacaoAjuste.id}`;
+    setDoc(doc(db, 'families', activeFamilyId, 'reserva', transacaoAjuste.id), transacaoAjuste).catch(err =>
+      handleFirestoreError(err, OperationType.WRITE, resPath)
+    );
+  }
+
   return { estadoAtualizado, transacaoAjuste };
 }
 
@@ -501,7 +578,12 @@ export function resetarParaDadosPadrao(): AppState {
     diaAtualSimulado: null,
     mesAtivo: obterMesAtualPadrao()
   };
-  salvarEstado(estado);
+
+  if (activeFamilyId) {
+    sincronizarEstadoCompletoParaFirestore(activeFamilyId, estado).catch(err =>
+      console.error('Erro ao resetar dados no Firestore:', err)
+    );
+  }
   return estado;
 }
 
@@ -547,7 +629,6 @@ export function filtrarLancamentosDoMes(lancamentos: Lancamento[], mesAtivo: str
   const idsIniciais = new Set(['lan-1', 'lan-2', 'lan-3', 'lan-4']);
   return lancamentos.filter(l => {
     if (l.mes_ref === mesAtivo) return true;
-    // Se estiver no mês atual do sistema, inclui lançamentos legado ou exemplos iniciais
     if (mesAtivo === mesPadraoSistema && (idsIniciais.has(l.id) || !l.mes_ref)) {
       return true;
     }
@@ -567,7 +648,15 @@ export function atualizarConfiguracaoCasal(
     ...estadoAtual,
     config: novaConfig
   };
-  salvarEstado(novoEstado);
+
+  if (activeFamilyId) {
+    const famPath = `families/${activeFamilyId}`;
+    updateDoc(doc(db, 'families', activeFamilyId), {
+      config: novaConfig,
+      nomeFamilia: novaConfig.nome_familia || 'Nossa Família'
+    }).catch(err => handleFirestoreError(err, OperationType.UPDATE, famPath));
+  }
+
   return novoEstado;
 }
 
@@ -585,7 +674,14 @@ export function salvarOrcamentoCompleto(
     ...estadoAtual,
     orcamento: novoOrcamento
   };
-  salvarEstado(novoEstado);
+
+  if (activeFamilyId) {
+    const famPath = `families/${activeFamilyId}`;
+    updateDoc(doc(db, 'families', activeFamilyId), {
+      orcamento: novoOrcamento
+    }).catch(err => handleFirestoreError(err, OperationType.UPDATE, famPath));
+  }
+
   return novoEstado;
 }
 
@@ -614,54 +710,8 @@ export function virarMesCiclo(
     estado = res.estadoAtualizado;
   }
 
-  salvarEstado(estado);
+  salvarEstado({ diaAtualSimulado: 1, mesAtivo: novoMesRef });
   return estado;
-}
-
-export function gerarCodigoCasalAleatorio(): string {
-  const num = Math.floor(1000 + Math.random() * 9000);
-  return `CASAL-${num}`;
-}
-
-export function vincularPorCodigoCasal(
-  codigoInput: string,
-  estadoAtual: AppState
-): { estadoAtualizado: AppState; encontrouDadosNuvem: boolean } {
-  const codigoLimpo = codigoInput.trim().toUpperCase();
-  const rawSnapshot = localStorage.getItem(STORAGE_KEYS.CLOUD_CASAL_PREFIX + codigoLimpo);
-
-  if (rawSnapshot) {
-    try {
-      const snap = JSON.parse(rawSnapshot);
-      const novoEstado: AppState = {
-        ...estadoAtual,
-        lancamentos: snap.lancamentos || estadoAtual.lancamentos,
-        rendasExtras: snap.rendasExtras || estadoAtual.rendasExtras,
-        fixas: snap.fixas || estadoAtual.fixas,
-        orcamento: snap.orcamento || estadoAtual.orcamento,
-        reserva: snap.reserva || estadoAtual.reserva,
-        config: {
-          ...estadoAtual.config,
-          ...(snap.config || {}),
-          codigo_casal: codigoLimpo
-        }
-      };
-      salvarEstado(novoEstado);
-      return { estadoAtualizado: novoEstado, encontrouDadosNuvem: true };
-    } catch {
-      // Continua como novo vínculo
-    }
-  }
-
-  const novoEstado: AppState = {
-    ...estadoAtual,
-    config: {
-      ...estadoAtual.config,
-      codigo_casal: codigoLimpo
-    }
-  };
-  salvarEstado(novoEstado);
-  return { estadoAtualizado: novoEstado, encontrouDadosNuvem: false };
 }
 
 export function aplicarOnboardingNovoCasal(
@@ -678,7 +728,6 @@ export function aplicarOnboardingNovoCasal(
   },
   estadoAtual: AppState
 ): AppState {
-  const codigo = gerarCodigoCasalAleatorio();
   const hoje = new Date().toISOString().split('T')[0];
 
   const novaConfig: Configuracao = {
@@ -689,7 +738,6 @@ export function aplicarOnboardingNovoCasal(
     renda_liquida_mensal: dados.rendaLiquida > 0 ? dados.rendaLiquida : 6500,
     meta_reserva_mensal: dados.metaReservaMensal >= 0 ? dados.metaReservaMensal : 200,
     colchao_meta: dados.metaColchaoTotal > 0 ? dados.metaColchaoTotal : 4600,
-    codigo_casal: codigo,
     plano_assinatura: 'trial',
     data_inicio_trial: hoje,
     onboarding_concluido: true
@@ -729,21 +777,573 @@ export function aplicarOnboardingNovoCasal(
     diaAtualSimulado: null
   };
 
-  salvarEstado(novoEstado);
   return novoEstado;
+}
+
+// -------------------------------------------------------------
+// FIRESTORE: PERFIL DO USUÁRIO, FAMÍLIA, CONVITE 24 CHARS E MIGRAÇÃO
+// -------------------------------------------------------------
+
+export interface UserProfileFirestore {
+  familyId?: string;
+  nome: string;
+  criadoEm: string;
+}
+
+export async function obterPerfilUsuarioFirestore(uid: string): Promise<UserProfileFirestore | null> {
+  const path = `users/${uid}`;
+  try {
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (!snap.exists()) return null;
+    return snap.data() as UserProfileFirestore;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, path);
+    return null;
+  }
+}
+
+export async function criarFamiliaNoFirestore(
+  uid: string,
+  nomeUsuario: string,
+  estadoInicial: AppState
+): Promise<string> {
+  const familyId = `fam-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  const agoraIso = new Date().toISOString();
+
+  try {
+    // 1. Criar documento principal da família (regra: request.resource.data.members == [request.auth.uid])
+    await setDoc(doc(db, 'families', familyId), {
+      nomeFamilia: estadoInicial.config.nome_familia || 'Nossa Família',
+      members: [uid],
+      config: estadoInicial.config,
+      orcamento: estadoInicial.orcamento,
+      categorias: estadoInicial.categorias,
+      mesAtivo: estadoInicial.mesAtivo || obterMesAtualPadrao(),
+      criadoEm: agoraIso,
+      conviteUsado: ''
+    });
+
+    // 2. Salvar familyId em users/{uid}
+    await setDoc(
+      doc(db, 'users', uid),
+      {
+        familyId,
+        nome: nomeUsuario || estadoInicial.config.nome_parceiro_1 || 'Parceiro 1',
+        criadoEm: agoraIso
+      },
+      { merge: true }
+    );
+
+    // 3. Gravar subcoleções iniciais em lote (fixas, reserva, lancamentos iniciais se houver)
+    const batch = writeBatch(db);
+    estadoInicial.fixas.forEach(f => {
+      const fId = fixIdFromDescricao(f.descricao);
+      batch.set(doc(db, 'families', familyId, 'fixas', fId), f);
+    });
+    estadoInicial.reserva.forEach(r => {
+      batch.set(doc(db, 'families', familyId, 'reserva', r.id), r);
+    });
+    estadoInicial.lancamentos.forEach(l => {
+      batch.set(doc(db, 'families', familyId, 'lancamentos', l.id), l);
+    });
+    estadoInicial.rendasExtras.forEach(re => {
+      batch.set(doc(db, 'families', familyId, 'rendasExtras', re.id), re);
+    });
+    await batch.commit();
+
+    definirFamilyIdAtivo(familyId);
+    return familyId;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `families/${familyId}`);
+    throw err;
+  }
+}
+
+export async function sincronizarEstadoCompletoParaFirestore(
+  familyId: string,
+  estado: AppState
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'families', familyId), {
+      nomeFamilia: estado.config.nome_familia || 'Nossa Família',
+      config: estado.config,
+      orcamento: estado.orcamento,
+      categorias: estado.categorias,
+      mesAtivo: estado.mesAtivo
+    });
+
+    const batch = writeBatch(db);
+    estado.fixas.forEach(f => {
+      batch.set(doc(db, 'families', familyId, 'fixas', fixIdFromDescricao(f.descricao)), f);
+    });
+    estado.reserva.forEach(r => {
+      batch.set(doc(db, 'families', familyId, 'reserva', r.id), r);
+    });
+    estado.lancamentos.forEach(l => {
+      batch.set(doc(db, 'families', familyId, 'lancamentos', l.id), l);
+    });
+    estado.rendasExtras.forEach(r => {
+      batch.set(doc(db, 'families', familyId, 'rendasExtras', r.id), r);
+    });
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `families/${familyId}`);
+  }
+}
+
+/**
+ * Escuta em tempo real (onSnapshot) o documento da família e todas as 5 subcoleções
+ */
+export function assinarFamiliaTempoReal(
+  familyId: string,
+  onUpdate: (
+    parcial: Partial<AppState>,
+    meta?: { members?: string[]; nomeFamilia?: string; origemSubcolecao?: string }
+  ) => void
+): Unsubscribe {
+  definirFamilyIdAtivo(familyId);
+
+  const unsubs: Unsubscribe[] = [];
+
+  // 1. Documento principal families/{familyId}
+  unsubs.push(
+    onSnapshot(
+      doc(db, 'families', familyId),
+      snap => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        onUpdate(
+          {
+            ...(data.config ? { config: data.config as Configuracao } : {}),
+            ...(data.orcamento ? { orcamento: data.orcamento as OrcamentoItem[] } : {}),
+            ...(data.categorias ? { categorias: data.categorias as CategoriaItem[] } : {}),
+            ...(data.mesAtivo ? { mesAtivo: data.mesAtivo as string } : {})
+          },
+          {
+            members: (data.members as string[]) || [],
+            nomeFamilia: data.nomeFamilia as string
+          }
+        );
+      },
+      err => handleFirestoreError(err, OperationType.GET, `families/${familyId}`)
+    )
+  );
+
+  // 2. Subcoleção lancamentos
+  unsubs.push(
+    onSnapshot(
+      collection(db, 'families', familyId, 'lancamentos'),
+      snap => {
+        const lista: Lancamento[] = [];
+        snap.forEach(d => lista.push(d.data() as Lancamento));
+        lista.sort((a, b) => (b.criado_em || b.data).localeCompare(a.criado_em || a.data));
+        onUpdate({ lancamentos: lista }, { origemSubcolecao: 'lancamentos' });
+      },
+      err => handleFirestoreError(err, OperationType.LIST, `families/${familyId}/lancamentos`)
+    )
+  );
+
+  // 3. Subcoleção fixas
+  unsubs.push(
+    onSnapshot(
+      collection(db, 'families', familyId, 'fixas'),
+      snap => {
+        const lista: ContaFixa[] = [];
+        snap.forEach(d => lista.push(d.data() as ContaFixa));
+        if (lista.length > 0) {
+          lista.sort((a, b) => a.dia_vencimento - b.dia_vencimento);
+          onUpdate({ fixas: lista }, { origemSubcolecao: 'fixas' });
+        }
+      },
+      err => handleFirestoreError(err, OperationType.LIST, `families/${familyId}/fixas`)
+    )
+  );
+
+  // 4. Subcoleção rendasExtras
+  unsubs.push(
+    onSnapshot(
+      collection(db, 'families', familyId, 'rendasExtras'),
+      snap => {
+        const lista: RendaExtra[] = [];
+        snap.forEach(d => lista.push(d.data() as RendaExtra));
+        lista.sort((a, b) => (b.criado_em || b.data).localeCompare(a.criado_em || a.data));
+        onUpdate({ rendasExtras: lista }, { origemSubcolecao: 'rendasExtras' });
+      },
+      err => handleFirestoreError(err, OperationType.LIST, `families/${familyId}/rendasExtras`)
+    )
+  );
+
+  // 5. Subcoleção reserva
+  unsubs.push(
+    onSnapshot(
+      collection(db, 'families', familyId, 'reserva'),
+      snap => {
+        const lista: TransacaoReserva[] = [];
+        snap.forEach(d => lista.push(d.data() as TransacaoReserva));
+        if (lista.length > 0) {
+          lista.sort((a, b) => a.data.localeCompare(b.data));
+          onUpdate({ reserva: lista }, { origemSubcolecao: 'reserva' });
+        }
+      },
+      err => handleFirestoreError(err, OperationType.LIST, `families/${familyId}/reserva`)
+    )
+  );
+
+  // 6. Subcoleção alertas
+  unsubs.push(
+    onSnapshot(
+      collection(db, 'families', familyId, 'alertas'),
+      snap => {
+        const lista: AlertaLog[] = [];
+        snap.forEach(d => lista.push(d.data() as AlertaLog));
+        lista.sort((a, b) => (b.data_hora || '').localeCompare(a.data_hora || ''));
+        onUpdate({ alertasLog: lista }, { origemSubcolecao: 'alertas' });
+      },
+      err => handleFirestoreError(err, OperationType.LIST, `families/${familyId}/alertas`)
+    )
+  );
+
+  return () => {
+    unsubs.forEach(u => u());
+  };
+}
+
+// -------------------------------------------------------------
+// CONVITE SEGURO DE 24 CARACTERES (48h de validade)
+// -------------------------------------------------------------
+
+export function gerarTokenConvite24(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const randomBytes = new Uint8Array(24);
+  crypto.getRandomValues(randomBytes);
+  let token = '';
+  for (let i = 0; i < 24; i++) {
+    token += chars[randomBytes[i] % chars.length];
+  }
+  return token;
+}
+
+export interface InviteFirestoreData {
+  token: string;
+  familyId: string;
+  createdBy: string;
+  nomeFamilia?: string;
+  expiresAt: Timestamp;
+  used: boolean;
+  usedBy?: string;
+}
+
+export async function criarConviteParceiroFirestore(
+  familyId: string,
+  nomeFamilia: string
+): Promise<{ token: string; link: string; expiresAt: Date }> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) {
+    throw new Error('Faça login com sua conta Google para gerar um link de convite.');
+  }
+
+  const token = gerarTokenConvite24();
+  const expiresDate = new Date(Date.now() + 48 * 60 * 60 * 1000); // 48 horas
+  const path = `invites/${token}`;
+
+  try {
+    await setDoc(doc(db, 'invites', token), {
+      familyId,
+      createdBy: uid,
+      nomeFamilia: nomeFamilia || 'Nossa Família',
+      expiresAt: Timestamp.fromDate(expiresDate),
+      used: false
+    });
+
+    const link = `${window.location.origin}${window.location.pathname}?convite=${encodeURIComponent(token)}`;
+    return { token, link, expiresAt: expiresDate };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+    throw err;
+  }
+}
+
+export async function consultarConviteFirestore(token: string): Promise<{
+  valido: boolean;
+  motivoErro?: string;
+  convite?: InviteFirestoreData;
+}> {
+  const path = `invites/${token}`;
+  try {
+    const snap = await getDoc(doc(db, 'invites', token));
+    if (!snap.exists()) {
+      return {
+        valido: false,
+        motivoErro: 'Este link de convite não existe ou foi digitado incorretamente.'
+      };
+    }
+
+    const data = snap.data();
+    const expiresAt = data.expiresAt as Timestamp;
+    const used = Boolean(data.used);
+
+    if (used) {
+      return {
+        valido: false,
+        motivoErro: 'Este convite já foi utilizado. Cada família permite no máximo 2 membros conectados.'
+      };
+    }
+
+    if (!expiresAt || expiresAt.toMillis() <= Date.now()) {
+      return {
+        valido: false,
+        motivoErro: 'Este convite expirou (validade máxima de 48 horas). Peça ao seu par para gerar um novo link.'
+      };
+    }
+
+    return {
+      valido: true,
+      convite: {
+        token,
+        familyId: data.familyId,
+        createdBy: data.createdBy,
+        nomeFamilia: data.nomeFamilia || 'Família',
+        expiresAt,
+        used,
+        usedBy: data.usedBy
+      }
+    };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, path);
+    return {
+      valido: false,
+      motivoErro: 'Não foi possível validar o convite agora.'
+    };
+  }
+}
+
+export async function aceitarConviteFamiliaFirestore(token: string): Promise<{
+  sucesso: boolean;
+  familyId?: string;
+  nomeFamilia?: string;
+  erro?: string;
+}> {
+  const user = auth.currentUser;
+  if (!user) {
+    return { sucesso: false, erro: 'Faça login com o Google antes de aceitar o convite.' };
+  }
+
+  const consulta = await consultarConviteFirestore(token);
+  if (!consulta.valido || !consulta.convite) {
+    return { sucesso: false, erro: consulta.motivoErro || 'Convite inválido.' };
+  }
+
+  const { familyId, createdBy, nomeFamilia } = consulta.convite;
+
+  if (createdBy === user.uid) {
+    // O próprio criador clicou no link
+    definirFamilyIdAtivo(familyId);
+    return {
+      sucesso: true,
+      familyId,
+      nomeFamilia
+    };
+  }
+
+  try {
+    // Operação atômica com writeBatch respeitando as regras estritas do firestore.rules:
+    // 1. families/{familyId}: members = [createdBy, user.uid], conviteUsado = token
+    // 2. invites/{token}: used = true, usedBy = user.uid
+    // 3. users/{user.uid}: { familyId, nome, criadoEm }
+    const batch = writeBatch(db);
+
+    batch.update(doc(db, 'families', familyId), {
+      members: [createdBy, user.uid],
+      conviteUsado: token
+    });
+
+    batch.update(doc(db, 'invites', token), {
+      used: true,
+      usedBy: user.uid
+    });
+
+    batch.set(
+      doc(db, 'users', user.uid),
+      {
+        familyId,
+        nome: user.displayName || 'Parceiro(a)',
+        criadoEm: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
+    await batch.commit();
+    definirFamilyIdAtivo(familyId);
+
+    return {
+      sucesso: true,
+      familyId,
+      nomeFamilia
+    };
+  } catch (err: any) {
+    console.error('Erro ao aceitar convite:', err);
+    if (err?.message?.includes('permission-denied') || err?.code === 'permission-denied') {
+      return {
+        sucesso: false,
+        erro: 'Não foi possível entrar na família. Verifique se ela já atingiu o limite máximo de 2 membros ou se o convite expirou.'
+      };
+    }
+    return {
+      sucesso: false,
+      erro: 'Erro ao vincular sua conta à família. Tente novamente.'
+    };
+  }
+}
+
+// -------------------------------------------------------------
+// MIGRAÇÃO DOS DADOS ANTIGOS DO LOCALSTORAGE PARA O FIRESTORE
+// -------------------------------------------------------------
+
+export function temDadosAntigosNoLocalStorage(): boolean {
+  try {
+    return Object.values(LEGACY_STORAGE_KEYS).some(key => localStorage.getItem(key) !== null);
+  } catch {
+    return false;
+  }
+}
+
+export function limparChavesAntigasLocalStorage(): void {
+  try {
+    Object.values(LEGACY_STORAGE_KEYS).forEach(key => localStorage.removeItem(key));
+    // Também limpa eventuais snapshots antigos com prefixo orcamento_saas_casal_v1_
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('orcamento_saas_casal_v1_')) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+  } catch (err) {
+    console.warn('Erro ao limpar chaves antigas do localStorage:', err);
+  }
+}
+
+export async function verificarFamiliaVaziaNoFirestore(familyId: string): Promise<boolean> {
+  try {
+    const snap = await getDocs(collection(db, 'families', familyId, 'lancamentos'));
+    return snap.empty;
+  } catch {
+    return false;
+  }
+}
+
+export async function migrarDadosLocalStorageParaFirestore(familyId: string): Promise<number> {
+  const rawLancamentos = localStorage.getItem(LEGACY_STORAGE_KEYS.LANCAMENTOS);
+  const rawRendasExtras = localStorage.getItem(LEGACY_STORAGE_KEYS.RENDAS_EXTRAS);
+  const rawFixas = localStorage.getItem(LEGACY_STORAGE_KEYS.FIXAS);
+  const rawOrcamento = localStorage.getItem(LEGACY_STORAGE_KEYS.ORCAMENTO);
+  const rawCategorias = localStorage.getItem(LEGACY_STORAGE_KEYS.CATEGORIAS);
+  const rawReserva = localStorage.getItem(LEGACY_STORAGE_KEYS.RESERVA);
+  const rawConfig = localStorage.getItem(LEGACY_STORAGE_KEYS.CONFIG);
+  const rawAlertas = localStorage.getItem(LEGACY_STORAGE_KEYS.ALERTAS_LOG);
+  const rawMesAtivo = localStorage.getItem(LEGACY_STORAGE_KEYS.MES_ATIVO);
+
+  const lancamentos: Lancamento[] = rawLancamentos ? JSON.parse(rawLancamentos) : [];
+  const rendasExtras: RendaExtra[] = rawRendasExtras ? JSON.parse(rawRendasExtras) : [];
+  const fixas: ContaFixa[] = rawFixas ? JSON.parse(rawFixas) : [];
+  const orcamento: OrcamentoItem[] | null = rawOrcamento ? JSON.parse(rawOrcamento) : null;
+  const categorias: CategoriaItem[] | null = rawCategorias ? JSON.parse(rawCategorias) : null;
+  const reserva: TransacaoReserva[] = rawReserva ? JSON.parse(rawReserva) : [];
+  const config: Partial<Configuracao> | null = rawConfig ? JSON.parse(rawConfig) : null;
+  const alertas: AlertaLog[] = rawAlertas ? JSON.parse(rawAlertas) : [];
+
+  type OperacaoBatch = {
+    ref: ReturnType<typeof doc>;
+    data: Record<string, any>;
+    merge?: boolean;
+  };
+
+  const operacoes: OperacaoBatch[] = [];
+
+  // Atualizar documento da família se houver config/orcamento/categorias/mesAtivo
+  const updateFamilia: Record<string, any> = {};
+  if (config) {
+    updateFamilia.config = {
+      ...CONFIG_PADRAO,
+      ...config
+    };
+    if (config.nome_familia) {
+      updateFamilia.nomeFamilia = config.nome_familia;
+    }
+  }
+  if (orcamento && orcamento.length > 0) updateFamilia.orcamento = orcamento;
+  if (categorias && categorias.length > 0) updateFamilia.categorias = categorias;
+  if (rawMesAtivo) updateFamilia.mesAtivo = rawMesAtivo;
+
+  if (Object.keys(updateFamilia).length > 0) {
+    await updateDoc(doc(db, 'families', familyId), updateFamilia);
+  }
+
+  lancamentos.forEach(l => {
+    const id = l.id || `lan-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    operacoes.push({
+      ref: doc(db, 'families', familyId, 'lancamentos', id),
+      data: { ...l, id }
+    });
+  });
+
+  rendasExtras.forEach(r => {
+    const id = r.id || `rec-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    operacoes.push({
+      ref: doc(db, 'families', familyId, 'rendasExtras', id),
+      data: { ...r, id }
+    });
+  });
+
+  fixas.forEach(f => {
+    const id = fixIdFromDescricao(f.descricao);
+    operacoes.push({
+      ref: doc(db, 'families', familyId, 'fixas', id),
+      data: f
+    });
+  });
+
+  reserva.forEach(r => {
+    const id = r.id || `res-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    operacoes.push({
+      ref: doc(db, 'families', familyId, 'reserva', id),
+      data: { ...r, id }
+    });
+  });
+
+  alertas.forEach(a => {
+    const id = a.id || `alerta-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    operacoes.push({
+      ref: doc(db, 'families', familyId, 'alertas', id),
+      data: { ...a, id }
+    });
+  });
+
+  // Enviar em lotes de até 400 operações por writeBatch
+  const TAMANHO_LOTE = 400;
+  for (let i = 0; i < operacoes.length; i += TAMANHO_LOTE) {
+    const fatia = operacoes.slice(i, i + TAMANHO_LOTE);
+    const batch = writeBatch(db);
+    fatia.forEach(op => {
+      batch.set(op.ref, op.data);
+    });
+    await batch.commit();
+  }
+
+  // Apagar as chaves antigas do localStorage após concluir a importação
+  limparChavesAntigasLocalStorage();
+  return operacoes.length;
 }
 
 // -------------------------------------------------------------
 // CENÁRIOS DE TESTE PREPARADOS PARA OS CRITÉRIOS DE ACEITAÇÃO
 // -------------------------------------------------------------
 
-// Cenário de Teste 1: Duplo desvio no Dia 15 (70% gasto, reserva R$ 0)
 export function aplicarCenarioDia15(estadoAtual: AppState): AppState {
   const agora = new Date();
   const mesRef = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
-  
-  // Tetos variáveis somam 1750 (Mercado 1200, Combustível 300, Farmácia 150, Lazer 100)
-  // 70% de 1750 = 1225 gastos até o dia 15
+
   const lancamentosDia15: Lancamento[] = [
     {
       id: 'test-dia15-1',
@@ -797,9 +1397,8 @@ export function aplicarCenarioDia15(estadoAtual: AppState): AppState {
       mes_ref: mesRef,
       criado_em: `${mesRef}-14T20:00:00Z`
     }
-  ]; // Total = 1225 (exatamente 70% de 1750)
+  ];
 
-  // Reserva zerada no mês (nenhum aporte com o mês atual)
   const reservaSemAporte = estadoAtual.reserva.filter(r => !r.data.startsWith(mesRef));
 
   const estadoComDia15: AppState = {
@@ -819,17 +1418,18 @@ export function aplicarCenarioDia15(estadoAtual: AppState): AppState {
   );
 
   estadoComDia15.alertasLog = alertas;
-  salvarEstado(estadoComDia15);
+  salvarEstado({ diaAtualSimulado: 15 });
+
+  if (activeFamilyId) {
+    sincronizarEstadoCompletoParaFirestore(activeFamilyId, estadoComDia15);
+  }
   return estadoComDia15;
 }
-
-// Cenário de Teste 2: Lançamento de R$ 91,88 em Higiene (teto 150)
-export const carregarEstadoInicial = carregarEstado;
 
 export function aplicarCenarioHigiene91(estadoAtual: AppState): { estadoAtualizado: AppState; alertas: AlertaLog[] } {
   const agora = new Date();
   const mesRef = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
-  
+
   const novo: Omit<Lancamento, 'id' | 'mes_ref' | 'criado_em'> = {
     data: `${mesRef}-10`,
     valor: 91.88,
@@ -846,11 +1446,10 @@ export function aplicarCenarioHigiene91(estadoAtual: AppState): { estadoAtualiza
   return { estadoAtualizado: res.estadoAtualizado, alertas: res.alertasDisparados };
 }
 
-// Cenário de Teste 3: 5ª compra de mercado (voltinhas ao mercado)
 export function aplicarCenarioVoltinhasMercado(estadoAtual: AppState): AppState {
   const agora = new Date();
   const mesRef = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
-  
+
   const comprasCinco: Lancamento[] = [
     {
       id: 'vol-1',
@@ -937,6 +1536,8 @@ export function aplicarCenarioVoltinhasMercado(estadoAtual: AppState): AppState 
   );
 
   novoEstado.alertasLog = alertas;
-  salvarEstado(novoEstado);
+  if (activeFamilyId) {
+    sincronizarEstadoCompletoParaFirestore(activeFamilyId, novoEstado);
+  }
   return novoEstado;
 }

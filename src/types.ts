@@ -79,7 +79,6 @@ export interface Configuracao {
   nome_familia?: string;
   nome_parceiro_1?: string;
   nome_parceiro_2?: string;
-  codigo_casal?: string;
   plano_assinatura?: 'trial' | 'mensal' | 'anual';
   data_inicio_trial?: string;
   onboarding_concluido?: boolean;

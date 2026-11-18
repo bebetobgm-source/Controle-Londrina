@@ -2,18 +2,15 @@ import React, { useState } from 'react';
 import {
   ArrowRight,
   ArrowLeft,
-  Users,
-  Wallet,
-  ShieldCheck,
   Sparkles,
   CheckCircle2,
-  KeyRound,
-  Copy,
-  Check
+  Link2
 } from 'lucide-react';
 import { formatarMoeda } from '../services/engine';
 
 interface Props {
+  nomeUsuarioGoogle?: string;
+  salvando?: boolean;
   onConcluirOnboarding: (dados: {
     nomeFamilia: string;
     nomeParceiro1: string;
@@ -25,22 +22,26 @@ interface Props {
     tetosCategorias: Record<string, number>;
     limparExemplos: boolean;
   }) => void;
-  onVincularCodigoExistente: (codigo: string) => void;
-  onCancelar: () => void;
+  onUsarTokenConvite?: (tokenOuLink: string) => void;
+  onCancelar?: () => void;
 }
 
 export const OnboardingCasal: React.FC<Props> = ({
+  nomeUsuarioGoogle,
+  salvando = false,
   onConcluirOnboarding,
-  onVincularCodigoExistente,
+  onUsarTokenConvite,
   onCancelar
 }) => {
   const [passo, setPasso] = useState<1 | 2 | 3>(1);
   const [modoConvite, setModoConvite] = useState(false);
-  const [codigoConviteInput, setCodigoConviteInput] = useState('');
+  const [linkOuTokenInput, setLinkOuTokenInput] = useState('');
 
   // Passo 1: Identidade do Casal
   const [nomeFamilia, setNomeFamilia] = useState('Nossa Família');
-  const [nomeParceiro1, setNomeParceiro1] = useState('Marido');
+  const [nomeParceiro1, setNomeParceiro1] = useState(
+    nomeUsuarioGoogle ? nomeUsuarioGoogle.split(' ')[0] : 'Marido'
+  );
   const [nomeParceiro2, setNomeParceiro2] = useState('Esposa');
 
   // Passo 2: Renda e Colchão
@@ -63,7 +64,6 @@ export const OnboardingCasal: React.FC<Props> = ({
   const totalTetosVariaveis = (Object.values(tetos) as number[]).reduce((a, b) => a + b, 0);
 
   const handleSugerirTetosAutomaticos = () => {
-    // Sugestão inteligente de ~32% da renda líquida para variáveis do dia a dia
     const verbaVariavel = Math.max(800, Math.round(rendaNum * 0.32));
     setTetos({
       'Mercado': Math.round(verbaVariavel * 0.50),
@@ -72,6 +72,20 @@ export const OnboardingCasal: React.FC<Props> = ({
       'Farmácia e Saúde': Math.round(verbaVariavel * 0.10),
       'Lazer': Math.round(verbaVariavel * 0.10)
     });
+  };
+
+  const extrairTokenDeLink = (valor: string): string => {
+    const limpo = valor.trim();
+    try {
+      if (limpo.includes('convite=')) {
+        const url = new URL(limpo.startsWith('http') ? limpo : `https://app.local/${limpo}`);
+        return url.searchParams.get('convite') || limpo;
+      }
+    } catch {
+      const match = limpo.match(/convite=([A-Za-z0-9]+)/);
+      if (match) return match[1];
+    }
+    return limpo;
   };
 
   const handleFinalizar = (e: React.FormEvent) => {
@@ -96,7 +110,7 @@ export const OnboardingCasal: React.FC<Props> = ({
         <div className="flex items-center justify-between border-b border-neutral-800 pb-4">
           <div>
             <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 block">
-              Configuração em 60 segundos • Passo {passo} de 3
+              Configuração da Família na Nuvem • Passo {passo} de 3
             </span>
             <h2 className="text-lg font-extrabold text-white">
               {passo === 1 && 'Quem faz parte do casal?'}
@@ -104,13 +118,15 @@ export const OnboardingCasal: React.FC<Props> = ({
               {passo === 3 && 'Limites Mensais de Gastos'}
             </h2>
           </div>
-          <button
-            type="button"
-            onClick={onCancelar}
-            className="text-xs font-semibold text-neutral-400 hover:text-white"
-          >
-            Voltar
-          </button>
+          {onCancelar && (
+            <button
+              type="button"
+              onClick={onCancelar}
+              className="text-xs font-semibold text-neutral-400 hover:text-white"
+            >
+              Voltar
+            </button>
+          )}
         </div>
 
         {/* Barra de Progresso */}
@@ -127,56 +143,60 @@ export const OnboardingCasal: React.FC<Props> = ({
 
         {passo === 1 && (
           <div className="space-y-4 animate-in fade-in">
-            {/* Alternador: Criar Nova Conta vs Entrar com Código do Par */}
-            <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-neutral-950 p-1 border border-neutral-800">
-              <button
-                type="button"
-                onClick={() => setModoConvite(false)}
-                className={`rounded-lg py-2 text-xs font-bold transition-all ${
-                  !modoConvite
-                    ? 'bg-neutral-800 text-white shadow'
-                    : 'text-neutral-400 hover:text-white'
-                }`}
-              >
-                Criar Conta do Casal
-              </button>
-              <button
-                type="button"
-                onClick={() => setModoConvite(true)}
-                className={`rounded-lg py-2 text-xs font-bold transition-all ${
-                  modoConvite
-                    ? 'bg-sky-500 text-neutral-950 font-extrabold shadow'
-                    : 'text-neutral-400 hover:text-white'
-                }`}
-              >
-                Já tenho Código
-              </button>
-            </div>
+            {onUsarTokenConvite && (
+              <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-neutral-950 p-1 border border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => setModoConvite(false)}
+                  className={`rounded-lg py-2 text-xs font-bold transition-all ${
+                    !modoConvite
+                      ? 'bg-neutral-800 text-white shadow'
+                      : 'text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  Criar Nova Família
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModoConvite(true)}
+                  className={`rounded-lg py-2 text-xs font-bold transition-all ${
+                    modoConvite
+                      ? 'bg-sky-500 text-neutral-950 font-extrabold shadow'
+                      : 'text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  Recebi um Link do Par
+                </button>
+              </div>
+            )}
 
-            {modoConvite ? (
+            {modoConvite && onUsarTokenConvite ? (
               <div className="space-y-4 pt-2">
-                <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-3.5 text-xs text-sky-200 leading-relaxed">
-                  Seu marido ou esposa já configurou o aplicativo? Digite abaixo o código <strong>CASAL-XXXX</strong> que você recebeu para conectar seu celular imediatamente:
+                <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-3.5 text-xs text-sky-200 leading-relaxed flex items-start gap-2.5">
+                  <Link2 className="h-4 w-4 text-sky-400 shrink-0 mt-0.5" />
+                  <span>
+                    Seu marido ou esposa já criou a família e gerou o link de convite no botão <strong>"Conectar meu par"</strong>? Cole o link ou token abaixo:
+                  </span>
                 </div>
                 <div>
                   <label className="text-xs font-bold text-neutral-300 uppercase block mb-1">
-                    Código de Convite do Casal
+                    Link ou Token de Convite (24 caracteres)
                   </label>
                   <input
                     type="text"
-                    placeholder="Ex: CASAL-8492"
-                    value={codigoConviteInput}
-                    onChange={e => setCodigoConviteInput(e.target.value.toUpperCase())}
-                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-4 py-3 text-base font-mono font-bold uppercase text-white focus:border-sky-400 focus:outline-none"
+                    placeholder="Cole o link https://.../?convite=..."
+                    value={linkOuTokenInput}
+                    onChange={e => setLinkOuTokenInput(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-4 py-3 text-xs font-mono text-white focus:border-sky-400 focus:outline-none"
                   />
                 </div>
                 <button
                   type="button"
-                  disabled={!codigoConviteInput.trim()}
-                  onClick={() => onVincularCodigoExistente(codigoConviteInput.trim().toUpperCase())}
+                  disabled={!linkOuTokenInput.trim()}
+                  onClick={() => onUsarTokenConvite(extrairTokenDeLink(linkOuTokenInput))}
                   className="w-full rounded-xl bg-sky-400 hover:bg-sky-300 disabled:opacity-40 py-3.5 text-sm font-extrabold text-neutral-950 transition-all"
                 >
-                  Vincular Celular ao Casal →
+                  Validar Convite da Família →
                 </button>
               </div>
             ) : (
@@ -222,7 +242,7 @@ export const OnboardingCasal: React.FC<Props> = ({
                 </div>
 
                 <p className="text-[11px] text-neutral-400">
-                  Estes nomes aparecerão nos botões de lançamento rápido para vocês saberem quem registrou cada compra.
+                  Assim que criar a família, você poderá gerar um link seguro de 48h para conectar o celular do seu par no WhatsApp.
                 </p>
 
                 <button
@@ -388,10 +408,11 @@ export const OnboardingCasal: React.FC<Props> = ({
               </button>
               <button
                 type="submit"
-                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-400 hover:bg-emerald-300 py-3.5 text-sm font-extrabold text-neutral-950 shadow-lg shadow-emerald-500/20 transition-all"
+                disabled={salvando}
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 py-3.5 text-sm font-extrabold text-neutral-950 shadow-lg shadow-emerald-500/20 transition-all"
               >
                 <CheckCircle2 className="h-4 w-4" />
-                <span>Criar Painel do Casal</span>
+                <span>{salvando ? 'Criando Família na Nuvem...' : 'Criar Família no Firestore'}</span>
               </button>
             </div>
           </form>

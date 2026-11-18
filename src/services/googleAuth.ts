@@ -7,6 +7,15 @@ import {
   User,
   signOut
 } from 'firebase/auth';
+import {
+  initializeFirestore,
+  getFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  doc,
+  getDocFromServer,
+  Firestore
+} from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export const SCOPES = [
@@ -17,9 +26,90 @@ export const SCOPES = [
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
-const provider = new GoogleAuthProvider();
-SCOPES.forEach(scope => provider.addScope(scope));
-provider.setCustomParameters({ prompt: 'select_account' });
+const databaseId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId;
+
+let firestoreInstance: Firestore;
+try {
+  firestoreInstance = initializeFirestore(
+    app,
+    {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+      })
+    },
+    databaseId
+  );
+} catch {
+  firestoreInstance = getFirestore(app, databaseId);
+}
+
+export const db = firestoreInstance;
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo:
+        auth.currentUser?.providerData?.map(p => ({
+          providerId: p.providerId,
+          email: p.email
+        })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Please check your Firebase configuration.');
+    }
+  }
+}
+testConnection();
+
+const providerComSheets = new GoogleAuthProvider();
+SCOPES.forEach(scope => providerComSheets.addScope(scope));
+providerComSheets.setCustomParameters({ prompt: 'select_account' });
+
+const providerBasico = new GoogleAuthProvider();
+providerBasico.setCustomParameters({ prompt: 'select_account' });
 
 const STORAGE_TOKEN_KEY = 'orcamento_google_access_token';
 const STORAGE_TOKEN_TIME_KEY = 'orcamento_google_token_timestamp';
@@ -27,6 +117,22 @@ const STORAGE_TOKEN_TIME_KEY = 'orcamento_google_token_timestamp';
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 let cachedUser: User | null = null;
+
+/**
+ * Observador de autenticação do Firebase para o app e Firestore
+ * (independente da expiração de 60min do token opcional do Google Sheets)
+ */
+export const observeFirebaseAuth = (callback: (user: User | null) => void) => {
+  return onAuthStateChanged(auth, (user: User | null) => {
+    cachedUser = user;
+    if (!user) {
+      cachedAccessToken = null;
+      localStorage.removeItem(STORAGE_TOKEN_KEY);
+      localStorage.removeItem(STORAGE_TOKEN_TIME_KEY);
+    }
+    callback(user);
+  });
+};
 
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
@@ -50,22 +156,24 @@ export const initAuth = (
   });
 };
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+export const googleSignIn = async (
+  incluirEscoposSheets = true
+): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
+    const providerEscolhido = incluirEscoposSheets ? providerComSheets : providerBasico;
+    const result = await signInWithPopup(auth, providerEscolhido);
     const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('Falha ao obter token de acesso do Google.');
+    const token = credential?.accessToken || '';
+
+    cachedUser = result.user;
+    if (token && incluirEscoposSheets) {
+      cachedAccessToken = token;
+      localStorage.setItem(STORAGE_TOKEN_KEY, token);
+      localStorage.setItem(STORAGE_TOKEN_TIME_KEY, String(Date.now()));
     }
 
-    cachedAccessToken = credential.accessToken;
-    cachedUser = result.user;
-
-    localStorage.setItem(STORAGE_TOKEN_KEY, credential.accessToken);
-    localStorage.setItem(STORAGE_TOKEN_TIME_KEY, String(Date.now()));
-
-    return { user: result.user, accessToken: cachedAccessToken };
+    return { user: result.user, accessToken: token };
   } catch (error: any) {
     console.error('Erro no login Google:', error);
     let mensagemTratada = error.message || 'Falha ao autenticar com o Google.';
@@ -94,7 +202,6 @@ export const getAccessToken = async (): Promise<string | null> => {
 
   if (savedToken && savedTime) {
     const elapsedMinutes = (Date.now() - parseInt(savedTime, 10)) / (1000 * 60);
-    // Tokens OAuth do Google duram 60 min. Mantemos válido enquanto estiver dentro do período.
     if (elapsedMinutes < 60) {
       cachedAccessToken = savedToken;
       return savedToken;
@@ -104,9 +211,6 @@ export const getAccessToken = async (): Promise<string | null> => {
   return null;
 };
 
-/**
- * Retorna true se o usuário já fez login alguma vez mas o token expirou
- */
 export const isTokenExpirado = (): boolean => {
   const savedToken = localStorage.getItem(STORAGE_TOKEN_KEY);
   const savedTime = localStorage.getItem(STORAGE_TOKEN_TIME_KEY);
@@ -115,9 +219,6 @@ export const isTokenExpirado = (): boolean => {
   return elapsedMinutes >= 55;
 };
 
-/**
- * Invalida o token em cache se a API do Google retornar 401 Unauthorized
- */
 export const invalidarTokenGoogle = () => {
   cachedAccessToken = null;
   localStorage.removeItem(STORAGE_TOKEN_KEY);
@@ -125,11 +226,8 @@ export const invalidarTokenGoogle = () => {
   window.dispatchEvent(new CustomEvent('orcamento-google-sessao-expirada'));
 };
 
-/**
- * Renova a sessão do Google com um clique
- */
 export const renovarTokenGoogle = async (): Promise<string | null> => {
-  const res = await googleSignIn();
+  const res = await googleSignIn(true);
   return res?.accessToken || null;
 };
 
@@ -145,3 +243,5 @@ export const logout = async () => {
   localStorage.removeItem(STORAGE_TOKEN_TIME_KEY);
   window.dispatchEvent(new CustomEvent('orcamento-google-logout'));
 };
+
+export const googleSignOut = logout;

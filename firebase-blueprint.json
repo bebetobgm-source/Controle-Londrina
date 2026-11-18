@@ -1,0 +1,195 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Authenticated user profile linked to a couple's family workspace.",
+      "type": "object",
+      "properties": {
+        "familyId": {
+          "type": "string",
+          "description": "ID of the family document in families/{familyId}"
+        },
+        "nome": {
+          "type": "string",
+          "description": "Display name of the user"
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["familyId", "nome", "criadoEm"]
+    },
+    "Family": {
+      "title": "Family",
+      "description": "Shared family workspace for a couple (max 2 members).",
+      "type": "object",
+      "properties": {
+        "nomeFamilia": {
+          "type": "string",
+          "description": "Family or couple name"
+        },
+        "members": {
+          "type": "array",
+          "description": "Array of member UIDs (max 2)"
+        },
+        "config": {
+          "type": "object",
+          "description": "Family budget configuration"
+        },
+        "orcamento": {
+          "type": "array",
+          "description": "Category budget ceilings"
+        },
+        "categorias": {
+          "type": "array",
+          "description": "Active categories and subcategories"
+        },
+        "mesAtivo": {
+          "type": "string",
+          "description": "Active month reference (YYYY-MM)"
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "conviteUsado": {
+          "type": "string",
+          "description": "Token of the invite used by the second member to join"
+        }
+      },
+      "required": ["nomeFamilia", "members", "config", "orcamento", "categorias", "mesAtivo", "criadoEm"]
+    },
+    "Lancamento": {
+      "title": "Lancamento",
+      "description": "Variable expense transaction.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "data": { "type": "string" },
+        "valor": { "type": "number" },
+        "categoria": { "type": "string" },
+        "subcategoria": { "type": "string" },
+        "estabelecimento": { "type": "string" },
+        "forma_pagamento": { "type": "string" },
+        "quem": { "type": "string" },
+        "essencial": { "type": "string" },
+        "observacao": { "type": "string" },
+        "mes_ref": { "type": "string" },
+        "criado_em": { "type": "string" }
+      },
+      "required": ["id", "data", "valor", "categoria", "subcategoria", "forma_pagamento", "quem", "essencial", "mes_ref", "criado_em"]
+    },
+    "ContaFixa": {
+      "title": "ContaFixa",
+      "description": "Recurring monthly fixed bill.",
+      "type": "object",
+      "properties": {
+        "descricao": { "type": "string" },
+        "valor": { "type": "number" },
+        "dia_vencimento": { "type": "number" },
+        "categoria": { "type": "string" },
+        "ativo": { "type": "string" },
+        "pago_mes_ref": { "type": "string" }
+      },
+      "required": ["descricao", "valor", "dia_vencimento", "categoria", "ativo", "pago_mes_ref"]
+    },
+    "RendaExtra": {
+      "title": "RendaExtra",
+      "description": "Extra income transaction.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "data": { "type": "string" },
+        "valor": { "type": "number" },
+        "descricao": { "type": "string" },
+        "categoria": { "type": "string" },
+        "quem": { "type": "string" },
+        "forma_recebimento": { "type": "string" },
+        "observacao": { "type": "string" },
+        "mes_ref": { "type": "string" },
+        "criado_em": { "type": "string" }
+      },
+      "required": ["id", "data", "valor", "descricao", "categoria", "quem", "mes_ref", "criado_em"]
+    },
+    "TransacaoReserva": {
+      "title": "TransacaoReserva",
+      "description": "Emergency fund (Colchao) deposit or withdrawal.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "data": { "type": "string" },
+        "valor": { "type": "number" },
+        "tipo": { "type": "string" },
+        "motivo": { "type": "string" },
+        "saldo_acumulado": { "type": "number" }
+      },
+      "required": ["id", "data", "valor", "tipo", "motivo", "saldo_acumulado"]
+    },
+    "AlertaLog": {
+      "title": "AlertaLog",
+      "description": "Budget pace alert log entry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "data_hora": { "type": "string" },
+        "tipo": { "type": "string" },
+        "severidade": { "type": "string" },
+        "mensagem": { "type": "string" },
+        "lido": { "type": "string" },
+        "mes_ref": { "type": "string" }
+      },
+      "required": ["id", "data_hora", "tipo", "severidade", "mensagem", "lido", "mes_ref"]
+    },
+    "Invite": {
+      "title": "Invite",
+      "description": "Secure 24-character token invite to link a partner to a family.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "nomeFamilia": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "used": { "type": "boolean" },
+        "usedBy": { "type": "string" }
+      },
+      "required": ["familyId", "createdBy", "expiresAt", "used"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profile document storing the active familyId."
+    },
+    "/families/{familyId}": {
+      "schema": "Family",
+      "description": "Family document shared by up to 2 members."
+    },
+    "/families/{familyId}/lancamentos/{id}": {
+      "schema": "Lancamento",
+      "description": "Variable expenses subcollection for the family."
+    },
+    "/families/{familyId}/fixas/{id}": {
+      "schema": "ContaFixa",
+      "description": "Fixed monthly bills subcollection for the family."
+    },
+    "/families/{familyId}/rendasExtras/{id}": {
+      "schema": "RendaExtra",
+      "description": "Extra income subcollection for the family."
+    },
+    "/families/{familyId}/reserva/{id}": {
+      "schema": "TransacaoReserva",
+      "description": "Emergency fund transactions subcollection for the family."
+    },
+    "/families/{familyId}/alertas/{id}": {
+      "schema": "AlertaLog",
+      "description": "Alert history subcollection for the family."
+    },
+    "/invites/{token}": {
+      "schema": "Invite",
+      "description": "48-hour single-use invite token for linking the second partner."
+    }
+  }
+}
