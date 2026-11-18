@@ -14,15 +14,7 @@ import {
   obterMesAtualPadrao
 } from '../services/storage';
 import { ESTABELECIMENTOS_SUGERIDOS, CATEGORIAS_RENDA_EXTRA, SUGESTOES_RENDA_EXTRA } from '../data/defaultData';
-import {
-  obterPlanilhaConectada,
-  anexarLancamentoNaPlanilha,
-  anexarRendaExtraNaPlanilha,
-  anexarTransacaoReservaNaPlanilha,
-  sincronizarReservaNaPlanilha,
-  sincronizarTudoSemDuplicar
-} from '../services/googleSheets';
-import { Undo2, CheckCircle2, Store, Calendar, ArrowRight, CloudCheck, Coins, TrendingUp, ShieldCheck } from 'lucide-react';
+import { Undo2, CheckCircle2, Store, Calendar, ArrowRight, Coins, ShieldCheck } from 'lucide-react';
 
 interface Props {
   appState: AppState;
@@ -147,11 +139,6 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
       setUltimoLancamentoId(novaTransacao.id);
       setUltimoTipoLancado('colchao');
 
-      const planilhaConectada = obterPlanilhaConectada();
-      if (planilhaConectada) {
-        anexarTransacaoReservaNaPlanilha(planilhaConectada.id, novaTransacao);
-      }
-
       const novoSaldo = novaTransacao.saldo_acumulado;
       const metaColchao = appState.config.colchao_meta || 4600;
       const pct = Math.min(100, Math.round((novoSaldo / metaColchao) * 100));
@@ -181,14 +168,6 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
       setUltimoLancamentoId(novoId);
       setUltimoTipoLancado('renda_extra');
 
-      const planilhaConectada = obterPlanilhaConectada();
-      if (planilhaConectada) {
-        const itemCriado = estadoAtualizado.rendasExtras.find(r => r.id === novoId);
-        if (itemCriado) {
-          anexarRendaExtraNaPlanilha(planilhaConectada.id, itemCriado);
-        }
-      }
-
       setFeedbackImpacto(
         `🎉 Renda extra de ${formatarMoeda(valorFinal)} registrada! Somada ao orçamento familiar deste mês.`
       );
@@ -215,15 +194,6 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
     setAppState(estadoAtualizado);
     setUltimoLancamentoId(novoId);
     setUltimoTipoLancado('despesa');
-
-    // Sincronização automática em tempo real com Google Sheets se conectado
-    const planilhaConectada = obterPlanilhaConectada();
-    if (planilhaConectada) {
-      const gastoRecemCriado = estadoAtualizado.lancamentos.find(l => l.id === novoId);
-      if (gastoRecemCriado) {
-        anexarLancamentoNaPlanilha(planilhaConectada.id, gastoRecemCriado);
-      }
-    }
 
     // Calcular feedback imediato: "Restam R$ 214 de mercado para 9 dias, ou seja R$ 23 por dia."
     const agora = new Date();
@@ -279,32 +249,12 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
     if (ultimoTipoLancado === 'renda_extra') {
       estadoRestaurado = excluirRendaExtra(ultimoLancamentoId, appState);
       setAppState(estadoRestaurado);
-      const planilhaConectada = obterPlanilhaConectada();
-      if (planilhaConectada) {
-        sincronizarTudoSemDuplicar(
-          planilhaConectada.id,
-          estadoRestaurado.lancamentos,
-          estadoRestaurado.rendasExtras
-        );
-      }
     } else if (ultimoTipoLancado === 'colchao') {
       estadoRestaurado = excluirTransacaoReserva(ultimoLancamentoId, appState);
       setAppState(estadoRestaurado);
-      const planilhaConectada = obterPlanilhaConectada();
-      if (planilhaConectada) {
-        sincronizarReservaNaPlanilha(planilhaConectada.id, estadoRestaurado.reserva);
-      }
     } else {
       estadoRestaurado = excluirLancamento(ultimoLancamentoId, appState);
       setAppState(estadoRestaurado);
-      const planilhaConectada = obterPlanilhaConectada();
-      if (planilhaConectada) {
-        sincronizarTudoSemDuplicar(
-          planilhaConectada.id,
-          estadoRestaurado.lancamentos,
-          estadoRestaurado.rendasExtras
-        );
-      }
     }
 
     setUltimoLancamentoId(null);

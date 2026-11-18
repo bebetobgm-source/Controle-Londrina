@@ -4,13 +4,13 @@ import {
   Users,
   Copy,
   Check,
-  Share2,
   Calendar,
   Crown,
   ExternalLink,
   Link2,
   MessageCircle,
-  LogOut
+  LogOut,
+  Download
 } from 'lucide-react';
 import {
   AppState,
@@ -19,8 +19,11 @@ import {
   virarMesCiclo,
   formatarMesExibicao,
   navegarMes,
-  criarConviteParceiroFirestore
+  criarConviteParceiroFirestore,
+  filtrarLancamentosDoMes,
+  obterRotuloQuem
 } from '../services/storage';
+import { Lancamento } from '../types';
 import { formatarMoeda, calcularProjecaoFechamento } from '../services/engine';
 
 interface Props {
@@ -182,6 +185,67 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
         : '⏳ Modo de Avaliação Gratuita de 7 dias ativo.'
     );
     setTimeout(() => setFeedback(null), 3500);
+  };
+
+  const escaparCampoCsv = (valor: string | number | undefined): string => {
+    const texto = String(valor ?? '').replace(/\r?\n|\r/g, ' ').trim();
+    if (texto.includes(';') || texto.includes('"')) {
+      return `"${texto.replace(/"/g, '""')}"`;
+    }
+    return texto;
+  };
+
+  const gerarEBaixarCsv = (lista: Lancamento[], nomeArquivo: string, rotuloFeedback: string) => {
+    const cabecalho = [
+      'data',
+      'valor',
+      'categoria',
+      'subcategoria',
+      'quem',
+      'estabelecimento',
+      'forma de pagamento'
+    ].join(';');
+
+    const linhas = lista.map(l => {
+      const valorPtBr = l.valor.toFixed(2).replace('.', ',');
+      const quemNome = obterRotuloQuem(l.quem, appState.config);
+      return [
+        escaparCampoCsv(l.data),
+        escaparCampoCsv(valorPtBr),
+        escaparCampoCsv(l.categoria),
+        escaparCampoCsv(l.subcategoria),
+        escaparCampoCsv(quemNome),
+        escaparCampoCsv(l.estabelecimento || ''),
+        escaparCampoCsv(l.forma_pagamento || '')
+      ].join(';');
+    });
+
+    // UTF-8 com BOM (\uFEFF) e separador ponto e vírgula para abrir direto no Excel em português
+    const conteudoCsv = '\uFEFF' + [cabecalho, ...linhas].join('\r\n');
+    const blob = new Blob([conteudoCsv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', nomeArquivo);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setFeedback(`📥 ${rotuloFeedback} (${lista.length} lançamento${lista.length === 1 ? '' : 's'}) baixado com sucesso!`);
+    setTimeout(() => setFeedback(null), 4000);
+  };
+
+  const handleExportarMesAtivoCsv = () => {
+    const lancamentosMes = filtrarLancamentosDoMes(appState.lancamentos, appState.mesAtivo);
+    const nomeArquivo = `orcamento-${appState.mesAtivo}.csv`;
+    gerarEBaixarCsv(lancamentosMes, nomeArquivo, `CSV de ${formatarMesExibicao(appState.mesAtivo, true)}`);
+  };
+
+  const handleExportarTudoCsv = () => {
+    const nomeArquivo = `orcamento-completo-todos-os-meses.csv`;
+    gerarEBaixarCsv(appState.lancamentos, nomeArquivo, 'CSV completo de todos os meses');
   };
 
   const qtdMembros = Math.min(2, Math.max(1, membrosConectados.length));
@@ -535,13 +599,45 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                   </span>
                 </div>
                 <p className="text-xs text-neutral-300 leading-relaxed">
-                  Sua assinatura cobre os 2 celulares do casal com sincronização em tempo real no Firestore e espelhamento opcional em planilha Google Sheets.
+                  Sua assinatura cobre os 2 celulares do casal com sincronização em tempo real no Firestore e cache offline automático.
                 </p>
                 {emailUsuario && (
                   <p className="text-[11px] font-mono text-neutral-400 pt-1 border-t border-emerald-500/20">
                     Conta Google conectada: <strong className="text-white">{emailUsuario}</strong>
                   </p>
                 )}
+              </div>
+
+              {/* Exportar Dados (CSV compatível com Excel em português) */}
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3.5 space-y-2.5">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-neutral-300 block">
+                    Exportar Lançamentos (Excel / CSV)
+                  </span>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Arquivo CSV (UTF-8 com BOM e ponto e vírgula) pronto para abrir no Excel em português.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button
+                    id="btn-exportar-csv-mes"
+                    type="button"
+                    onClick={handleExportarMesAtivoCsv}
+                    className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-400 hover:bg-emerald-300 px-3 py-2.5 text-xs font-extrabold text-neutral-950 transition-all active:scale-95"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>Exportar meus dados (CSV)</span>
+                  </button>
+                  <button
+                    id="btn-exportar-csv-tudo"
+                    type="button"
+                    onClick={handleExportarTudoCsv}
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 px-3 py-2.5 text-xs font-bold text-white transition-all active:scale-95"
+                  >
+                    <Download className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Exportar tudo</span>
+                  </button>
+                </div>
               </div>
 
               {/* Alternar Planos */}

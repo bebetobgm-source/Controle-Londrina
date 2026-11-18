@@ -24,24 +24,9 @@ import {
   formatarDataBR
 } from '../services/engine';
 import {
-  obterPlanilhaConectada,
-  substituirLancamentosNaPlanilha,
-  sincronizarFixasNaPlanilha,
-  anexarRendaExtraNaPlanilha,
-  anexarTransacaoReservaNaPlanilha,
-  sincronizarReservaNaPlanilha,
-  puxarDadosCompletosDaPlanilha,
-  limparDuplicadosDaPlanilha,
-  zerarPlanilhaERecomessar,
-  sincronizarTudoSemDuplicar
-} from '../services/googleSheets';
-import { salvarEstado } from '../services/storage';
-import {
   Check,
   Clock,
-  AlertTriangle,
   ShieldCheck,
-  Wallet,
   Trash2,
   Sparkles,
   Receipt,
@@ -49,11 +34,10 @@ import {
   Pencil,
   Plus,
   Coins,
-  Music,
   X,
-  Users
+  AlertTriangle
 } from 'lucide-react';
-import { ContaFixa, RendaExtra, Quem } from '../types';
+import { ContaFixa, Quem } from '../types';
 import { CATEGORIAS_RENDA_EXTRA, SUGESTOES_RENDA_EXTRA } from '../data/defaultData';
 
 interface Props {
@@ -96,10 +80,15 @@ export const PainelDoMes: React.FC<Props> = ({
 
   const saldoColchao = appState.reserva.length > 0
     ? appState.reserva[appState.reserva.length - 1].saldo_acumulado
-    : 2000;
+    : 0;
 
-  // Fixas: pagas e a vencer
+  // Fixas: pagas e a vencer + detecção de duplicadas por descrição
   const fixasAtivas = appState.fixas.filter(f => f.ativo === 'S');
+  const contagemDescricoesFixas: Record<string, number> = {};
+  fixasAtivas.forEach(f => {
+    const chave = f.descricao.trim().toLowerCase();
+    contagemDescricoesFixas[chave] = (contagemDescricoesFixas[chave] || 0) + 1;
+  });
   const fixasPagas = fixasAtivas.filter(f => f.pago_mes_ref === mesRefAtual);
   const fixasAVencer = fixasAtivas.filter(f => f.pago_mes_ref !== mesRefAtual);
 
@@ -145,16 +134,9 @@ export const PainelDoMes: React.FC<Props> = ({
   const [colchaoFormData, setColchaoFormData] = useState(() => new Date().toISOString().split('T')[0]);
   const [colchaoFormQuem, setColchaoFormQuem] = useState<Quem>(appState.ultimoQuem || 'Ele');
 
-  const handleToggleFixa = async (descricao: string) => {
-    const novoEstado = alternarStatusContaFixa(descricao, appState);
+  const handleToggleFixa = (idOuDescricao: string) => {
+    const novoEstado = alternarStatusContaFixa(idOuDescricao, appState);
     setAppState(novoEstado);
-
-    const planilha = obterPlanilhaConectada();
-    if (planilha) {
-      setSincronizando(true);
-      await sincronizarFixasNaPlanilha(planilha.id, novoEstado.fixas);
-      setSincronizando(false);
-    }
   };
 
   const handleAbrirEdicaoFixa = (f: ContaFixa) => {
@@ -164,18 +146,20 @@ export const PainelDoMes: React.FC<Props> = ({
     setFormFixaDia(String(f.dia_vencimento));
   };
 
-  const handleSalvarEdicaoFixa = async (e: React.FormEvent) => {
+  const handleSalvarEdicaoFixa = (e: React.FormEvent) => {
     e.preventDefault();
     if (!contaFixaEmEdicao) return;
     const valorNum = parseFloat(formFixaValor.replace(',', '.'));
     const diaNum = parseInt(formFixaDia, 10);
     if (isNaN(valorNum) || valorNum < 0 || isNaN(diaNum) || diaNum < 1 || diaNum > 31) {
-      alert('Por favor insira um valor e dia de vencimento válidos (1 a 31).');
+      setMensagemFeedback('Por favor insira um valor e dia de vencimento válidos (1 a 31).');
+      setTimeout(() => setMensagemFeedback(null), 3500);
       return;
     }
 
+    const identificador = contaFixaEmEdicao.id || contaFixaEmEdicao.descricao;
     const novoEstado = atualizarContaFixa(
-      contaFixaEmEdicao.descricao,
+      identificador,
       {
         descricao: formFixaDescricao.trim() || contaFixaEmEdicao.descricao,
         valor: valorNum,
@@ -186,38 +170,24 @@ export const PainelDoMes: React.FC<Props> = ({
     setAppState(novoEstado);
     setContaFixaEmEdicao(null);
     setMensagemFeedback(`Conta fixa '${formFixaDescricao}' atualizada para ${formatarMoeda(valorNum)}!`);
-
-    const planilha = obterPlanilhaConectada();
-    if (planilha) {
-      setSincronizando(true);
-      await sincronizarFixasNaPlanilha(planilha.id, novoEstado.fixas);
-      setSincronizando(false);
-    }
     setTimeout(() => setMensagemFeedback(null), 3500);
   };
 
-  const handleExcluirFixa = async (descricao: string) => {
-    if (!confirm(`Deseja remover a conta fixa '${descricao}' do seu orçamento?`)) return;
-    const novoEstado = excluirContaFixa(descricao, appState);
+  const handleExcluirFixa = (idOuDescricao: string, nomeExibicao?: string) => {
+    const novoEstado = excluirContaFixa(idOuDescricao, appState);
     setAppState(novoEstado);
     setContaFixaEmEdicao(null);
-    setMensagemFeedback(`Conta fixa '${descricao}' removida com sucesso.`);
-
-    const planilha = obterPlanilhaConectada();
-    if (planilha) {
-      setSincronizando(true);
-      await sincronizarFixasNaPlanilha(planilha.id, novoEstado.fixas);
-      setSincronizando(false);
-    }
+    setMensagemFeedback(`Conta fixa '${nomeExibicao || idOuDescricao}' removida com sucesso.`);
     setTimeout(() => setMensagemFeedback(null), 3500);
   };
 
-  const handleCriarNovaFixa = async (e: React.FormEvent) => {
+  const handleCriarNovaFixa = (e: React.FormEvent) => {
     e.preventDefault();
     const valorNum = parseFloat(formFixaValor.replace(',', '.'));
     const diaNum = parseInt(formFixaDia, 10);
     if (!formFixaDescricao.trim() || isNaN(valorNum) || valorNum <= 0 || isNaN(diaNum) || diaNum < 1 || diaNum > 31) {
-      alert('Preencha descrição, valor e dia válidos.');
+      setMensagemFeedback('Preencha descrição, valor e dia válidos.');
+      setTimeout(() => setMensagemFeedback(null), 3500);
       return;
     }
 
@@ -237,25 +207,19 @@ export const PainelDoMes: React.FC<Props> = ({
     setFormFixaValor('');
     setFormFixaDia('');
     setMensagemFeedback(`Nova conta fixa '${nova.descricao}' adicionada com sucesso!`);
-
-    const planilha = obterPlanilhaConectada();
-    if (planilha) {
-      setSincronizando(true);
-      await sincronizarFixasNaPlanilha(planilha.id, novoEstado.fixas);
-      setSincronizando(false);
-    }
     setTimeout(() => setMensagemFeedback(null), 3500);
   };
 
-  const handleSalvarRendaExtra = async (e: React.FormEvent) => {
+  const handleSalvarRendaExtra = (e: React.FormEvent) => {
     e.preventDefault();
     const valorNum = parseFloat(rendaValor.replace(',', '.'));
     if (isNaN(valorNum) || valorNum <= 0) {
-      alert('Por favor insira um valor válido para a renda extra.');
+      setMensagemFeedback('Por favor insira um valor válido para a renda extra.');
+      setTimeout(() => setMensagemFeedback(null), 3500);
       return;
     }
 
-    const { estadoAtualizado, novoId } = registrarRendaExtra(
+    const { estadoAtualizado } = registrarRendaExtra(
       {
         data: agora.toISOString().split('T')[0],
         valor: valorNum,
@@ -272,30 +236,13 @@ export const PainelDoMes: React.FC<Props> = ({
     setRendaValor('');
     setRendaDescricao('');
     setMensagemFeedback(`🎉 Renda extra de ${formatarMoeda(valorNum)} somada ao orçamento do mês!`);
-
-    const planilha = obterPlanilhaConectada();
-    if (planilha) {
-      const rendaCriada = estadoAtualizado.rendasExtras.find(r => r.id === novoId);
-      if (rendaCriada) {
-        setSincronizando(true);
-        await anexarRendaExtraNaPlanilha(planilha.id, rendaCriada);
-        setSincronizando(false);
-      }
-    }
     setTimeout(() => setMensagemFeedback(null), 4000);
   };
 
-  const handleExcluirRendaExtra = async (id: string) => {
+  const handleExcluirRendaExtra = (id: string) => {
     const novoEstado = excluirRendaExtra(id, appState);
     setAppState(novoEstado);
     setMensagemFeedback('Renda extra removida.');
-
-    const planilha = obterPlanilhaConectada();
-    if (planilha) {
-      setSincronizando(true);
-      await sincronizarTudoSemDuplicar(planilha.id, novoEstado.lancamentos, novoEstado.rendasExtras);
-      setSincronizando(false);
-    }
     setTimeout(() => setMensagemFeedback(null), 3000);
   };
 
@@ -308,17 +255,18 @@ export const PainelDoMes: React.FC<Props> = ({
     setModalColchaoAberta(true);
   };
 
-  const handleSalvarColchao = async (e: React.FormEvent) => {
+  const handleSalvarColchao = (e: React.FormEvent) => {
     e.preventDefault();
     const valorNum = parseFloat(colchaoFormValor.replace(',', '.'));
     if (isNaN(valorNum) || valorNum < 0) {
-      alert('Por favor insira um valor numérico válido.');
+      setMensagemFeedback('Por favor insira um valor numérico válido.');
+      setTimeout(() => setMensagemFeedback(null), 3500);
       return;
     }
 
     if (colchaoModo === 'aporte') {
       const motivoFinal = colchaoFormMotivo.trim() || 'Aporte na Reserva';
-      const { estadoAtualizado, novaTransacao } = registrarAporteReserva(
+      const { estadoAtualizado } = registrarAporteReserva(
         {
           valor: valorNum,
           motivo: motivoFinal,
@@ -331,28 +279,13 @@ export const PainelDoMes: React.FC<Props> = ({
       setModalColchaoAberta(false);
       setColchaoFormValor('');
       setMensagemFeedback(`🛡️ Aporte de ${formatarMoeda(valorNum)} adicionado ao Colchão!`);
-
-      const planilha = obterPlanilhaConectada();
-      if (planilha) {
-        setSincronizando(true);
-        await anexarTransacaoReservaNaPlanilha(planilha.id, novaTransacao);
-        setSincronizando(false);
-      }
     } else {
-      // Ajustar saldo total consolidado
       const motivoFinal = colchaoFormMotivo.trim() || 'Ajuste de Saldo Consolidado';
       const { estadoAtualizado } = ajustarSaldoColchao(valorNum, motivoFinal, appState);
       setAppState(estadoAtualizado);
       setModalColchaoAberta(false);
       setColchaoFormValor('');
       setMensagemFeedback(`🛡️ Saldo total do Colchão ajustado para ${formatarMoeda(valorNum)}!`);
-
-      const planilha = obterPlanilhaConectada();
-      if (planilha) {
-        setSincronizando(true);
-        await sincronizarReservaNaPlanilha(planilha.id, estadoAtualizado.reserva);
-        setSincronizando(false);
-      }
     }
     setTimeout(() => setMensagemFeedback(null), 4000);
   };
@@ -361,13 +294,6 @@ export const PainelDoMes: React.FC<Props> = ({
     const novoEstado = excluirTransacaoReserva(id, appState);
     setAppState(novoEstado);
     setMensagemFeedback('Lançamento removido do Colchão e saldo recalculado.');
-
-    const planilha = obterPlanilhaConectada();
-    if (planilha) {
-      setSincronizando(true);
-      await sincronizarReservaNaPlanilha(planilha.id, novoEstado.reserva);
-      setSincronizando(false);
-    }
     setTimeout(() => setMensagemFeedback(null), 3000);
   };
 
@@ -395,26 +321,15 @@ export const PainelDoMes: React.FC<Props> = ({
       aberto: true,
       titulo: 'Remover Gastos de Exemplo?',
       mensagem:
-        'Deseja remover os 4 lançamentos de teste iniciais (Muffato, Posto, Feira, Farmácia) e manter apenas os seus lançamentos reais? A aba Lancamentos na planilha Google Sheets será atualizada de forma limpa, preservando seus gastos reais.',
+        'Deseja remover os 4 lançamentos de teste iniciais (Muffato, Posto, Feira, Farmácia) e manter apenas os seus lançamentos reais?',
       textoBotao: 'Remover Exemplos e Manter Meus Gastos',
       variante: 'aviso',
       acao: async () => {
         setSincronizando(true);
-        setMensagemFeedback('Removendo exemplos da planilha e do app...');
         try {
           const novoEstado = limparLancamentosDeExemplo(appState);
           setAppState(novoEstado);
-          const planilha = obterPlanilhaConectada();
-          if (planilha) {
-            await sincronizarTudoSemDuplicar(
-              planilha.id,
-              novoEstado.lancamentos,
-              novoEstado.rendasExtras
-            );
-          }
           setMensagemFeedback('✨ Gastos de exemplo removidos! Mantidos apenas seus gastos reais.');
-        } catch (err: any) {
-          setMensagemFeedback(err.message || 'Erro ao atualizar planilha.');
         } finally {
           setSincronizando(false);
           setModalConfirmacao(null);
@@ -424,134 +339,11 @@ export const PainelDoMes: React.FC<Props> = ({
     });
   };
 
-  const handleExcluirLancamento = async (id: string) => {
+  const handleExcluirLancamento = (id: string) => {
     const novoEstado = excluirLancamento(id, appState);
     setAppState(novoEstado);
     setMensagemFeedback('Lançamento excluído com sucesso.');
-
-    const planilha = obterPlanilhaConectada();
-    if (planilha) {
-      setSincronizando(true);
-      await sincronizarTudoSemDuplicar(planilha.id, novoEstado.lancamentos, novoEstado.rendasExtras);
-      setSincronizando(false);
-    }
-
     setTimeout(() => setMensagemFeedback(null), 3000);
-  };
-
-  const handlePuxarDaPlanilha = async () => {
-    const planilha = obterPlanilhaConectada();
-    if (!planilha) {
-      setMensagemFeedback('Nenhuma planilha conectada ainda. Conecte pelo botão Sheets.');
-      setTimeout(() => setMensagemFeedback(null), 3500);
-      return;
-    }
-
-    setSincronizando(true);
-    setMensagemFeedback('Puxando dados atualizados da sua planilha...');
-    try {
-      const res = await puxarDadosCompletosDaPlanilha(planilha.id);
-      setAppState(prev => {
-        const atualizado: AppState = {
-          ...prev,
-          lancamentos: res.lancamentos,
-          rendasExtras: res.rendasExtras,
-          fixas: res.fixas.length > 0 ? res.fixas : prev.fixas,
-          orcamento: res.orcamento && res.orcamento.length > 0 ? res.orcamento : prev.orcamento,
-          reserva: res.reserva && res.reserva.length > 0 ? res.reserva : prev.reserva
-        };
-        salvarEstado(atualizado);
-        return atualizado;
-      });
-      const dupInfo =
-        res.duplicadosIgnorados > 0
-          ? ` (${res.duplicadosIgnorados} duplicatas ignoradas)`
-          : '';
-      setMensagemFeedback(
-        `🎉 Sincronizado! ${res.totalLancamentos} despesas, ${res.totalRendas} rendas extras e ${res.totalFixas} contas fixas atualizados.${dupInfo}`
-      );
-    } catch (err: any) {
-      setMensagemFeedback(err.message || 'Erro ao sincronizar com a planilha.');
-    } finally {
-      setSincronizando(false);
-      setTimeout(() => setMensagemFeedback(null), 4500);
-    }
-  };
-
-  const handleLimparDuplicados = () => {
-    const planilha = obterPlanilhaConectada();
-    if (!planilha) {
-      setMensagemFeedback('Nenhuma planilha conectada ainda.');
-      return;
-    }
-    setModalConfirmacao({
-      aberto: true,
-      titulo: '🧹 Eliminar Duplicados da Planilha?',
-      mensagem:
-        'O sistema fará uma varredura na aba Lancamentos da sua planilha Google Sheets, identificando e removendo todas as linhas duplicadas (mesmo ID ou mesma data, valor, categoria e descrição). Apenas uma cópia única será mantida.',
-      textoBotao: 'Eliminar Duplicados Agora',
-      variante: 'aviso',
-      acao: async () => {
-        setSincronizando(true);
-        setMensagemFeedback('Varrendo e eliminando duplicados na planilha...');
-        try {
-          const res = await limparDuplicadosDaPlanilha(planilha.id);
-          setAppState(prev => {
-            const atualizado: AppState = {
-              ...prev,
-              lancamentos: res.lancamentos,
-              rendasExtras: res.rendasExtras
-            };
-            salvarEstado(atualizado);
-            return atualizado;
-          });
-          setMensagemFeedback(`🧹 ${res.mensagem}`);
-        } catch (err: any) {
-          setMensagemFeedback(err.message || 'Erro ao limpar duplicados.');
-        } finally {
-          setSincronizando(false);
-          setModalConfirmacao(null);
-          setTimeout(() => setMensagemFeedback(null), 5000);
-        }
-      }
-    });
-  };
-
-  const handleZerarTudo = () => {
-    setModalConfirmacao({
-      aberto: true,
-      titulo: '⚠️ Zerar Planilha e Aplicativo?',
-      mensagem:
-        'Atenção: Isso apagará TODOS os lançamentos de despesas e rendas extras da planilha Google Sheets (a aba Lancamentos ficará completamente em branco, apenas com a linha de cabeçalhos) e do aplicativo. Use para começar do zero com seus gastos reais. Suas contas fixas e configurações continuarão salvas.',
-      textoBotao: 'Sim, Zerar Tudo e Começar Limpo',
-      variante: 'perigo',
-      acao: async () => {
-        setSincronizando(true);
-        setMensagemFeedback('Zerando lançamentos na planilha e no app...');
-        try {
-          const planilha = obterPlanilhaConectada();
-          if (planilha) {
-            await zerarPlanilhaERecomessar(planilha.id);
-          }
-          setAppState(prev => {
-            const atualizado: AppState = {
-              ...prev,
-              lancamentos: [],
-              rendasExtras: []
-            };
-            salvarEstado(atualizado);
-            return atualizado;
-          });
-          setMensagemFeedback('🗑️ Planilha e aplicativo zerados com sucesso! Comece seus lançamentos reais.');
-        } catch (err: any) {
-          setMensagemFeedback(err.message || 'Erro ao zerar planilha.');
-        } finally {
-          setSincronizando(false);
-          setModalConfirmacao(null);
-          setTimeout(() => setMensagemFeedback(null), 4500);
-        }
-      }
-    });
   };
 
   return (
@@ -590,12 +382,6 @@ export const PainelDoMes: React.FC<Props> = ({
       {mensagemFeedback && (
         <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-300 flex items-center justify-between animate-in fade-in">
           <span>{mensagemFeedback}</span>
-          {sincronizando && (
-            <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-normal">
-              <RefreshCw className="h-3 w-3 animate-spin" />
-              Sincronizando Sheets...
-            </span>
-          )}
         </div>
       )}
 
@@ -618,18 +404,6 @@ export const PainelDoMes: React.FC<Props> = ({
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                {obterPlanilhaConectada() && (
-                  <button
-                    type="button"
-                    onClick={handlePuxarDaPlanilha}
-                    disabled={sincronizando}
-                    className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 text-[11px] font-bold text-emerald-400 transition-all active:scale-95 disabled:opacity-50"
-                    title="Puxar dados atualizados do Google Sheets em tempo real"
-                  >
-                    <RefreshCw className={`h-3 w-3 ${sincronizando ? 'animate-spin' : ''}`} />
-                    <span>{sincronizando ? 'Puxando...' : 'Puxar do Sheets'}</span>
-                  </button>
-                )}
                 <span className="text-xs font-mono font-bold text-white">
                   Total: {formatarMoeda(totalGastoLancamentos)}
                 </span>
@@ -651,38 +425,6 @@ export const PainelDoMes: React.FC<Props> = ({
                 <span className="text-xs font-mono font-bold text-white">{formatarMoeda(gastoConjunto)}</span>
               </div>
             </div>
-
-        {/* Barra Rápida de Manutenção da Planilha (Eliminar duplicados ou Zerar) */}
-        {obterPlanilhaConectada() && (
-          <div className="flex items-center justify-between gap-1.5 py-1.5 px-2.5 mb-2 rounded-xl bg-neutral-950/70 border border-neutral-800 text-[11px]">
-            <span className="text-neutral-400 flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Sincronização Ativa
-            </span>
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={handleLimparDuplicados}
-                disabled={sincronizando}
-                className="flex items-center gap-1 text-amber-300 hover:text-amber-200 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-700/60 rounded-lg px-2 py-0.5 transition-colors font-medium text-[10px]"
-                title="Varre o Google Sheets e remove linhas duplicadas mantendo registros únicos"
-              >
-                <Sparkles className="h-2.5 w-2.5 text-amber-400" />
-                <span>Eliminar Duplicados</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleZerarTudo}
-                disabled={sincronizando}
-                className="flex items-center gap-1 text-neutral-400 hover:text-rose-300 bg-neutral-900 hover:bg-rose-950/40 border border-neutral-800 hover:border-rose-800/50 rounded-lg px-2 py-0.5 transition-colors text-[10px]"
-                title="Limpar lançamentos de teste para começar do zero com gastos reais"
-              >
-                <Trash2 className="h-2.5 w-2.5 text-neutral-400" />
-                <span>Zerar</span>
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Banner para limpar lançamentos de exemplo se existirem */}
         {temLancamentosExemplo && (
@@ -969,58 +711,75 @@ export const PainelDoMes: React.FC<Props> = ({
           </button>
         </div>
 
-        <div className="divide-y divide-neutral-800/70">
-          {fixasAtivas.map(f => {
-            const isPago = f.pago_mes_ref === mesRefAtual;
-            const vencida = !isPago && f.dia_vencimento < diaAtual;
+        {fixasAtivas.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-neutral-800 p-4 text-center">
+            <p className="text-xs text-neutral-400">
+              Nenhuma conta fixa cadastrada ainda. Toque em <strong>&quot;+ Nova Fixa&quot;</strong> acima para adicionar as contas mensais da casa.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-neutral-800/70">
+            {fixasAtivas.map((f, idx) => {
+              const isPago = f.pago_mes_ref === mesRefAtual;
+              const vencida = !isPago && f.dia_vencimento < diaAtual;
+              const chaveDesc = f.descricao.trim().toLowerCase();
+              const isDuplicada = (contagemDescricoesFixas[chaveDesc] || 0) > 1;
+              const identificador = f.id || f.descricao;
 
-            return (
-              <div
-                key={f.descricao}
-                id={`fixa-item-${f.descricao.toLowerCase().replace(/\s+/g, '-')}`}
-                className="flex items-center justify-between py-2.5 text-xs group hover:bg-neutral-800/20 px-1 rounded-lg"
-              >
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`font-semibold ${isPago ? 'line-through text-neutral-500' : 'text-neutral-200'}`}>
-                      {f.descricao}
-                    </span>
-                    {vencida && (
-                      <span className="rounded bg-rose-500/20 px-1 py-0.2 text-[10px] font-bold text-rose-400">
-                        Venceu dia {f.dia_vencimento}
+              return (
+                <div
+                  key={f.id || `${f.descricao}-${idx}`}
+                  id={`fixa-item-${f.descricao.toLowerCase().replace(/\s+/g, '-')}-${idx}`}
+                  className="flex items-center justify-between py-2.5 text-xs group hover:bg-neutral-800/20 px-1 rounded-lg"
+                >
+                  <div className="min-w-0 pr-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`font-semibold ${isPago ? 'line-through text-neutral-500' : 'text-neutral-200'}`}>
+                        {f.descricao}
                       </span>
-                    )}
+                      {isDuplicada && (
+                        <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 border border-amber-500/40 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                          <AlertTriangle className="h-2.5 w-2.5 text-amber-400" />
+                          <span>Possível conta duplicada</span>
+                        </span>
+                      )}
+                      {vencida && (
+                        <span className="rounded bg-rose-500/20 px-1 py-0.2 text-[10px] font-bold text-rose-400">
+                          Venceu dia {f.dia_vencimento}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-neutral-500">Vencimento dia {f.dia_vencimento}</span>
                   </div>
-                  <span className="text-[11px] text-neutral-500">Vencimento dia {f.dia_vencimento}</span>
-                </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="font-mono font-medium text-neutral-200">{formatarMoeda(f.valor)}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleAbrirEdicaoFixa(f)}
-                    className="p-1 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-                    title={`Editar valor ou vencimento de ${f.descricao}`}
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleFixa(f.descricao)}
-                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition-all active:scale-95 ${
-                      isPago
-                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                        : 'bg-neutral-800 text-neutral-400 border border-neutral-700 hover:bg-neutral-700'
-                    }`}
-                  >
-                    {isPago ? <Check className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
-                    {isPago ? 'Paga' : 'Pagar'}
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-mono font-medium text-neutral-200">{formatarMoeda(f.valor)}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleAbrirEdicaoFixa(f)}
+                      className="p-1 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                      title={`Editar ou excluir ${f.descricao}`}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFixa(identificador)}
+                      className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition-all active:scale-95 ${
+                        isPago
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                          : 'bg-neutral-800 text-neutral-400 border border-neutral-700 hover:bg-neutral-700'
+                      }`}
+                    >
+                      {isPago ? <Check className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
+                      {isPago ? 'Paga' : 'Pagar'}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 6. PROJEÇÃO DE FECHAMENTO (Linear vs Ajustada) */}
@@ -1262,16 +1021,23 @@ export const PainelDoMes: React.FC<Props> = ({
               </div>
 
               <p className="text-[11px] text-neutral-400 mt-1">
-                Ao alterar o valor, o total de fixas, projeção de fechamento e a planilha serão sincronizados.
+                Ao alterar o valor, o total de fixas e a projeção de fechamento serão sincronizados na nuvem.
               </p>
 
               <div className="pt-3 flex items-center justify-between gap-2 border-t border-neutral-800">
                 <button
+                  id="btn-excluir-conta-fixa"
                   type="button"
-                  onClick={() => handleExcluirFixa(contaFixaEmEdicao.descricao)}
-                  className="px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-colors"
+                  onClick={() =>
+                    handleExcluirFixa(
+                      contaFixaEmEdicao.id || contaFixaEmEdicao.descricao,
+                      contaFixaEmEdicao.descricao
+                    )
+                  }
+                  className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-colors"
                 >
-                  Excluir
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Excluir</span>
                 </button>
                 <div className="flex items-center gap-2">
                   <button

@@ -133,13 +133,13 @@ export function carregarEstado(): AppState {
     return {
       lancamentos: [],
       rendasExtras: [],
-      fixas: FIXAS_PADRAO.map(f => ({ ...f, id: f.id || gerarUuid() })),
+      fixas: [],
       orcamento: [...ORCAMENTO_PADRAO],
       categorias: [...CATEGORIAS_PADRAO],
-      reserva: [...RESERVA_INICIAL],
+      reserva: [],
       config: {
         ...CONFIG_PADRAO,
-        nome_familia: CONFIG_PADRAO.nome_familia || 'Família Londrina',
+        nome_familia: CONFIG_PADRAO.nome_familia || 'Nossa Família',
         nome_parceiro_1: CONFIG_PADRAO.nome_parceiro_1 || 'Ele',
         nome_parceiro_2: CONFIG_PADRAO.nome_parceiro_2 || 'Ela',
         plano_assinatura: 'trial',
@@ -156,10 +156,10 @@ export function carregarEstado(): AppState {
     return {
       lancamentos: [],
       rendasExtras: [],
-      fixas: FIXAS_PADRAO.map(f => ({ ...f, id: f.id || gerarUuid() })),
+      fixas: [],
       orcamento: [...ORCAMENTO_PADRAO],
       categorias: [...CATEGORIAS_PADRAO],
-      reserva: [...RESERVA_INICIAL],
+      reserva: [],
       config: { ...CONFIG_PADRAO },
       alertasLog: [],
       ultimoQuem: 'Ele',
@@ -322,12 +322,17 @@ export function limparTodosLancamentos(estadoAtual: AppState): AppState {
   return { ...estadoAtual, lancamentos: [] };
 }
 
-export function alternarStatusContaFixa(descricao: string, estadoAtual: AppState): AppState {
+export function alternarStatusContaFixa(idOuDescricao: string, estadoAtual: AppState): AppState {
   const mesRefAtual = estadoAtual.mesAtivo || obterMesAtualPadrao();
   let contaModificada: ContaFixa | null = null;
+  let jaAlterou = false;
+
+  const temMatchPorId = estadoAtual.fixas.some(f => f.id === idOuDescricao);
 
   const novasFixas = estadoAtual.fixas.map(f => {
-    if (f.descricao === descricao) {
+    const match = temMatchPorId ? f.id === idOuDescricao : f.descricao === idOuDescricao;
+    if (match && !jaAlterou) {
+      jaAlterou = true;
       const novoPago = f.pago_mes_ref === mesRefAtual ? '' : mesRefAtual;
       const id = f.id || gerarUuid();
       contaModificada = { ...f, id, pago_mes_ref: novoPago };
@@ -348,13 +353,18 @@ export function alternarStatusContaFixa(descricao: string, estadoAtual: AppState
 }
 
 export function atualizarContaFixa(
-  descricaoOriginal: string,
+  idOuDescricaoOriginal: string,
   dadosAtualizados: Partial<ContaFixa>,
   estadoAtual: AppState
 ): AppState {
   let contaFinal: ContaFixa | null = null;
+  let jaAlterou = false;
+  const temMatchPorId = estadoAtual.fixas.some(f => f.id === idOuDescricaoOriginal);
+
   const novasFixas = estadoAtual.fixas.map(f => {
-    if (f.descricao === descricaoOriginal) {
+    const match = temMatchPorId ? f.id === idOuDescricaoOriginal : f.descricao === idOuDescricaoOriginal;
+    if (match && !jaAlterou) {
+      jaAlterou = true;
       const id = f.id || gerarUuid();
       contaFinal = { ...f, ...dadosAtualizados, id };
       return contaFinal;
@@ -376,16 +386,9 @@ export function adicionarContaFixa(
   novaConta: ContaFixa,
   estadoAtual: AppState
 ): AppState {
-  const existente = estadoAtual.fixas.find(
-    f => f.descricao.toLowerCase() === novaConta.descricao.toLowerCase()
-  );
-  const id = existente?.id || novaConta.id || gerarUuid();
+  const id = novaConta.id || gerarUuid();
   const contaComId: ContaFixa = { ...novaConta, id };
-
-  const filtradas = estadoAtual.fixas.filter(
-    f => f.descricao.toLowerCase() !== novaConta.descricao.toLowerCase()
-  );
-  const novasFixas = [...filtradas, contaComId];
+  const novasFixas = [...estadoAtual.fixas, contaComId];
 
   if (activeFamilyId) {
     setDoc(doc(db, 'families', activeFamilyId, 'fixas', id), contaComId).catch(err =>
@@ -397,11 +400,24 @@ export function adicionarContaFixa(
 }
 
 export function excluirContaFixa(
-  descricao: string,
+  idOuDescricao: string,
   estadoAtual: AppState
 ): AppState {
-  const alvo = estadoAtual.fixas.find(f => f.descricao === descricao);
-  const novasFixas = estadoAtual.fixas.filter(f => f.descricao !== descricao);
+  const temMatchPorId = estadoAtual.fixas.some(f => f.id === idOuDescricao);
+  const alvo = temMatchPorId
+    ? estadoAtual.fixas.find(f => f.id === idOuDescricao)
+    : estadoAtual.fixas.find(f => f.descricao === idOuDescricao);
+
+  let removeu = false;
+  const novasFixas = estadoAtual.fixas.filter(f => {
+    if (removeu) return true;
+    const match = temMatchPorId ? f.id === idOuDescricao : f.descricao === idOuDescricao;
+    if (match) {
+      removeu = true;
+      return false;
+    }
+    return true;
+  });
 
   if (activeFamilyId && alvo?.id) {
     deleteDoc(doc(db, 'families', activeFamilyId, 'fixas', alvo.id)).catch(err =>
@@ -499,7 +515,7 @@ export function registrarAporteReserva(
 
   const saldoAnterior = estadoAtual.reserva && estadoAtual.reserva.length > 0
     ? estadoAtual.reserva[estadoAtual.reserva.length - 1].saldo_acumulado
-    : 2000;
+    : 0;
 
   const novoSaldo = tipo === 'Aporte' ? saldoAnterior + valor : Math.max(0, saldoAnterior - valor);
 
@@ -569,7 +585,7 @@ export function ajustarSaldoColchao(
   const dataHoje = agora.toISOString().split('T')[0];
   const saldoAnterior = estadoAtual.reserva && estadoAtual.reserva.length > 0
     ? estadoAtual.reserva[estadoAtual.reserva.length - 1].saldo_acumulado
-    : 2000;
+    : 0;
 
   const diferenca = novoSaldoDesejado - saldoAnterior;
   const tipo = diferenca >= 0 ? 'Aporte' : 'Retirada';
@@ -785,7 +801,7 @@ export function aplicarOnboardingNovoCasal(
     return item;
   });
 
-  const novaReserva: TransacaoReserva[] = dados.saldoColchaoInicial >= 0
+  const novaReserva: TransacaoReserva[] = dados.saldoColchaoInicial > 0
     ? [
         {
           id: `res-onb-${Date.now()}`,
@@ -796,16 +812,16 @@ export function aplicarOnboardingNovoCasal(
           saldo_acumulado: dados.saldoColchaoInicial
         }
       ]
-    : estadoAtual.reserva;
+    : [];
 
   const novoEstado: AppState = {
     ...estadoAtual,
     config: novaConfig,
     orcamento: novoOrcamento,
     reserva: novaReserva,
-    fixas: estadoAtual.fixas.map(f => ({ ...f, id: f.id || gerarUuid() })),
-    lancamentos: dados.limparExemplos ? [] : estadoAtual.lancamentos,
-    rendasExtras: dados.limparExemplos ? [] : estadoAtual.rendasExtras,
+    fixas: [],
+    lancamentos: [],
+    rendasExtras: [],
     mesAtivo: obterMesAtualPadrao(),
     diaAtualSimulado: null
   };
@@ -868,26 +884,39 @@ export async function criarFamiliaNoFirestore(
     );
 
     // 3. Gravar subcoleções iniciais em lotes de no máximo 400 operações cada
+    // Garantir que FIXAS_PADRAO, LANCAMENTOS_INICIAIS e RESERVA_INICIAL de defaultData.ts NUNCA sejam gravados
+    const descricoesFixasPadrao = new Set(
+      FIXAS_PADRAO.map(fp => `${fp.descricao.trim().toLowerCase()}|${fp.valor}|${fp.dia_vencimento}`)
+    );
+    const idsLancamentosPadrao = new Set(LANCAMENTOS_INICIAIS.map(l => l.id));
+    const idsReservaPadrao = new Set(RESERVA_INICIAL.map(r => r.id));
+
     const operacoes: OperacaoBatch[] = [];
-    estadoInicial.fixas.forEach(f => {
-      const fId = f.id || gerarUuid();
-      operacoes.push({
-        ref: doc(db, 'families', familyId, 'fixas', fId),
-        data: { ...f, id: fId }
+    estadoInicial.fixas
+      .filter(f => !descricoesFixasPadrao.has(`${f.descricao.trim().toLowerCase()}|${f.valor}|${f.dia_vencimento}`))
+      .forEach(f => {
+        const fId = f.id || gerarUuid();
+        operacoes.push({
+          ref: doc(db, 'families', familyId, 'fixas', fId),
+          data: { ...f, id: fId }
+        });
       });
-    });
-    estadoInicial.reserva.forEach(r => {
-      operacoes.push({
-        ref: doc(db, 'families', familyId, 'reserva', r.id),
-        data: r
+    estadoInicial.reserva
+      .filter(r => !idsReservaPadrao.has(r.id))
+      .forEach(r => {
+        operacoes.push({
+          ref: doc(db, 'families', familyId, 'reserva', r.id),
+          data: r
+        });
       });
-    });
-    estadoInicial.lancamentos.forEach(l => {
-      operacoes.push({
-        ref: doc(db, 'families', familyId, 'lancamentos', l.id),
-        data: l
+    estadoInicial.lancamentos
+      .filter(l => !idsLancamentosPadrao.has(l.id))
+      .forEach(l => {
+        operacoes.push({
+          ref: doc(db, 'families', familyId, 'lancamentos', l.id),
+          data: l
+        });
       });
-    });
     estadoInicial.rendasExtras.forEach(re => {
       operacoes.push({
         ref: doc(db, 'families', familyId, 'rendasExtras', re.id),
@@ -895,7 +924,9 @@ export async function criarFamiliaNoFirestore(
       });
     });
 
-    await gravarEmLotes(operacoes);
+    if (operacoes.length > 0) {
+      await gravarEmLotes(operacoes);
+    }
 
     definirFamilyIdAtivo(familyId);
     return familyId;
@@ -1348,13 +1379,21 @@ export async function migrarDadosLocalStorageParaFirestore(familyId: string): Pr
     await updateDoc(doc(db, 'families', familyId), updateFamilia);
   }
 
-  lancamentos.forEach(l => {
-    const id = l.id || `lan-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    operacoes.push({
-      ref: doc(db, 'families', familyId, 'lancamentos', id),
-      data: { ...l, id }
+  const descricoesFixasPadrao = new Set(
+    FIXAS_PADRAO.map(fp => `${fp.descricao.trim().toLowerCase()}|${fp.valor}|${fp.dia_vencimento}`)
+  );
+  const idsLancamentosPadrao = new Set(LANCAMENTOS_INICIAIS.map(l => l.id));
+  const idsReservaPadrao = new Set(RESERVA_INICIAL.map(r => r.id));
+
+  lancamentos
+    .filter(l => !idsLancamentosPadrao.has(l.id))
+    .forEach(l => {
+      const id = l.id || `lan-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'lancamentos', id),
+        data: { ...l, id }
+      });
     });
-  });
 
   rendasExtras.forEach(r => {
     const id = r.id || `rec-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -1364,21 +1403,25 @@ export async function migrarDadosLocalStorageParaFirestore(familyId: string): Pr
     });
   });
 
-  fixas.forEach(f => {
-    const id = f.id || gerarUuid();
-    operacoes.push({
-      ref: doc(db, 'families', familyId, 'fixas', id),
-      data: { ...f, id }
+  fixas
+    .filter(f => !descricoesFixasPadrao.has(`${f.descricao.trim().toLowerCase()}|${f.valor}|${f.dia_vencimento}`))
+    .forEach(f => {
+      const id = f.id || gerarUuid();
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'fixas', id),
+        data: { ...f, id }
+      });
     });
-  });
 
-  reserva.forEach(r => {
-    const id = r.id || `res-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    operacoes.push({
-      ref: doc(db, 'families', familyId, 'reserva', id),
-      data: { ...r, id }
+  reserva
+    .filter(r => !idsReservaPadrao.has(r.id))
+    .forEach(r => {
+      const id = r.id || `res-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'reserva', id),
+        data: { ...r, id }
+      });
     });
-  });
 
   alertas.forEach(a => {
     const id = a.id || `alerta-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -1388,7 +1431,9 @@ export async function migrarDadosLocalStorageParaFirestore(familyId: string): Pr
     });
   });
 
-  await gravarEmLotes(operacoes);
+  if (operacoes.length > 0) {
+    await gravarEmLotes(operacoes);
+  }
 
   // Apagar as chaves antigas do localStorage após concluir a importação
   limparChavesAntigasLocalStorage();

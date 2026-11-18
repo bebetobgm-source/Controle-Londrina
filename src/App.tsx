@@ -35,33 +35,23 @@ import {
   TrendingUp,
   Sparkles,
   Calculator,
-  FileSpreadsheet,
   AlertTriangle,
   X,
   Calendar,
   RefreshCw,
-  ShieldAlert,
   Users,
   ChevronLeft,
   ChevronRight,
   Settings,
   Crown,
   CloudUpload,
-  CheckCircle2
+  CheckCircle2,
+  FlaskConical
 } from 'lucide-react';
 import {
-  obterPlanilhaConectada,
-  salvarPlanilhaConectada,
-  extrairSpreadsheetId,
-  puxarDadosCompletosDaPlanilha
-} from './services/googleSheets';
-import {
-  initAuth,
   observeFirebaseAuth,
   googleSignIn,
-  googleSignOut,
-  isTokenExpirado,
-  renovarTokenGoogle
+  googleSignOut
 } from './services/googleAuth';
 
 type AbaPadrao = 'lancamento' | 'painel' | 'conselheiro';
@@ -86,6 +76,7 @@ export default function App() {
 
   const [familyId, setFamilyId] = useState<string | null>(null);
   const [carregandoFamilia, setCarregandoFamilia] = useState<boolean>(false);
+  const [dadosFamiliaCarregados, setDadosFamiliaCarregados] = useState<boolean>(false);
   const [precisaOnboarding, setPrecisaOnboarding] = useState<boolean>(false);
   const [salvandoOnboarding, setSalvandoOnboarding] = useState<boolean>(false);
   const [membrosConectados, setMembrosConectados] = useState<string[]>([]);
@@ -113,58 +104,13 @@ export default function App() {
   const [modalSaaSAberto, setModalSaaSAberto] = useState<boolean>(false);
   const [abaModalSaaS, setAbaModalSaaS] = useState<'casal' | 'orcamento' | 'virar_mes' | 'assinatura'>('casal');
   const [alertaCriticoDispensado, setAlertaCriticoDispensado] = useState<boolean>(false);
-  const [sincronizandoNuvem, setSincronizandoNuvem] = useState<boolean>(false);
   const [isInAppBrowser, setIsInAppBrowser] = useState<boolean>(false);
-  const [sessaoGoogleExpirada, setSessaoGoogleExpirada] = useState<boolean>(false);
   const [notificacaoSincronizacao, setNotificacaoSincronizacao] = useState<string | null>(null);
-  const [ultimaSincronizacao, setUltimaSincronizacao] = useState<string | null>(() => {
-    return localStorage.getItem('orcamento_londrina_last_sync') || null;
-  });
 
-  // Sincronização opcional com Google Sheets (apenas quando uma planilha está conectada)
-  const sincronizarComPlanilhaOpcional = useCallback(
-    async (silencioso = true) => {
-      const planilha = obterPlanilhaConectada();
-      if (!planilha) return;
-
-      if (isTokenExpirado()) {
-        setSessaoGoogleExpirada(true);
-        return;
-      }
-
-      setSincronizandoNuvem(true);
-      try {
-        const resultado = await puxarDadosCompletosDaPlanilha(planilha.id);
-        const horaAtual = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-        setUltimaSincronizacao(horaAtual);
-        setSessaoGoogleExpirada(false);
-
-        if (!silencioso) {
-          setNotificacaoSincronizacao(
-            `✨ Planilha Google Sheets sincronizada (${resultado.lancamentos.length} lançamentos)!`
-          );
-          setTimeout(() => setNotificacaoSincronizacao(null), 3500);
-        }
-      } catch (err: any) {
-        if (err.message?.includes('expirou') || isTokenExpirado()) {
-          setSessaoGoogleExpirada(true);
-        }
-        if (!silencioso) {
-          setNotificacaoSincronizacao(err.message || 'Erro ao sincronizar com a planilha.');
-          setTimeout(() => setNotificacaoSincronizacao(null), 4000);
-        }
-      } finally {
-        setSincronizandoNuvem(false);
-      }
-    },
-    []
-  );
-
-  // 1. Detectar parâmetro de URL (?convite=<token> ou ?planilha=<id>)
+  // 1. Detectar parâmetro de URL (?convite=<token>)
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
-      const sheetParam = params.get('planilha') || params.get('sheet') || params.get('sheetId');
       const conviteParam = params.get('convite');
 
       if (conviteParam) {
@@ -172,14 +118,6 @@ export default function App() {
         sessionStorage.setItem(SESSION_INVITE_KEY, tokenLimpo);
         setTokenConvitePendente(tokenLimpo);
         window.history.replaceState({}, '', window.location.pathname);
-      }
-
-      if (sheetParam) {
-        const idLimpo = extrairSpreadsheetId(sheetParam);
-        if (idLimpo) {
-          salvarPlanilhaConectada(idLimpo, 'Orçamento Doméstico Londrina (Casal)');
-          window.history.replaceState({}, '', window.location.pathname);
-        }
       }
     } catch (e) {
       console.warn('Erro ao processar parâmetros da URL:', e);
@@ -200,19 +138,18 @@ export default function App() {
 
   // 3. Observar estado de autenticação do Firebase (Login obrigatório)
   useEffect(() => {
-    const unsubInit = initAuth();
     const unsubUser = observeFirebaseAuth(user => {
       setUsuarioAtual(user);
       setAuthVerificado(true);
       if (!user) {
         setFamilyId(null);
+        setDadosFamiliaCarregados(false);
         definirFamilyIdAtivo(null);
         setPrecisaOnboarding(false);
       }
     });
 
     return () => {
-      unsubInit();
       unsubUser();
     };
   }, []);
@@ -275,6 +212,7 @@ export default function App() {
     if (!usuarioAtual || !familyId) return;
 
     let cancelado = false;
+    setDadosFamiliaCarregados(false);
 
     // Verificar se há dados antigos no localStorage e se a família no Firestore está vazia
     async function checarMigracaoInicial() {
@@ -294,6 +232,7 @@ export default function App() {
         ...prev,
         ...parcial
       }));
+      setDadosFamiliaCarregados(true);
     });
 
     return () => {
@@ -306,7 +245,7 @@ export default function App() {
     setCarregandoLogin(true);
     setErroLogin(null);
     try {
-      await googleSignIn(false);
+      await googleSignIn();
       setExibirVitrineLanding(false);
     } catch (err: any) {
       setErroLogin(err?.message || 'Não foi possível entrar com o Google.');
@@ -318,6 +257,7 @@ export default function App() {
   const handleSairConta = async () => {
     await googleSignOut();
     setFamilyId(null);
+    setDadosFamiliaCarregados(false);
     definirFamilyIdAtivo(null);
     setExibirVitrineLanding(false);
   };
@@ -369,19 +309,6 @@ export default function App() {
   const handleDescartarDadosLocais = () => {
     limparChavesAntigasLocalStorage();
     setMostrarModalMigracao(false);
-  };
-
-  const handleRenovarSessao = async () => {
-    try {
-      setSincronizandoNuvem(true);
-      await renovarTokenGoogle();
-      setSessaoGoogleExpirada(false);
-      await sincronizarComPlanilhaOpcional(false);
-    } catch (e: any) {
-      console.warn('Renovação de sessão:', e);
-    } finally {
-      setSincronizandoNuvem(false);
-    }
   };
 
   const agora = new Date();
@@ -571,6 +498,7 @@ export default function App() {
               estadoInicial
             );
             setAppState(estadoInicial);
+            setDadosFamiliaCarregados(true);
             setFamilyId(novoFamilyId);
             setPrecisaOnboarding(false);
             setAbaAtiva('painel');
@@ -585,6 +513,20 @@ export default function App() {
           }
         }}
       />
+    );
+  }
+
+  // Enquanto o onSnapshot ainda não carregou os dados da família no Firestore, mostrar estado de carregando (e nunca dados de exemplo)
+  if (familyId && !dadosFamiliaCarregados) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3">
+          <RefreshCw className="h-6 w-6 text-emerald-400 animate-spin" />
+          <p className="text-xs font-mono text-neutral-400">
+            Carregando orçamento da família...
+          </p>
+        </div>
+      </div>
     );
   }
 
@@ -681,24 +623,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Alerta de Sessão do Google Sheets Expirada (Opcional) */}
-        {sessaoGoogleExpirada && obterPlanilhaConectada() && (
-          <div className="mt-2 p-2.5 rounded-xl bg-amber-950/90 border border-amber-700/80 flex items-center justify-between text-xs text-amber-200 animate-in fade-in">
-            <div className="flex items-center gap-2">
-              <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" />
-              <span className="text-[11px] leading-tight">Sessão do Google Sheets expirada. Renove para espelhar na planilha.</span>
-            </div>
-            <button
-              type="button"
-              onClick={handleRenovarSessao}
-              disabled={sincronizandoNuvem}
-              className="shrink-0 ml-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-neutral-950 font-bold px-2.5 py-1 text-[11px] transition-all active:scale-95 disabled:opacity-50"
-            >
-              {sincronizandoNuvem ? 'Conectando...' : 'Renovar'}
-            </button>
-          </div>
-        )}
-
         {/* Barra Superior do App com Identidade do Casal, Seletor de Mês e Ações SaaS */}
         <header className="pt-3.5 pb-2.5 border-b border-neutral-800/80 space-y-2">
           <div className="flex items-center justify-between gap-2">
@@ -766,7 +690,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Segunda linha do Header: Navegador de Mês (< Out/2026 >) + Sheets Opcional + Simulador de Dia */}
+          {/* Segunda linha do Header: Navegador de Mês (< Out/2026 >) + Simulador de Dia (Dev) */}
           <div className="flex items-center justify-between gap-2 pt-0.5">
             {/* Navegador de Mês */}
             <div className="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900 px-1.5 py-0.5">
@@ -797,30 +721,6 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-1.5">
-              {/* Botão de Status Google Sheets (Opcional / Modo Dev) */}
-              {obterPlanilhaConectada() ? (
-                <button
-                  type="button"
-                  onClick={() => sincronizarComPlanilhaOpcional(false)}
-                  disabled={sincronizandoNuvem}
-                  className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-1 rounded-lg hover:bg-emerald-900/60 transition-all active:scale-95 disabled:opacity-50"
-                  title="Espelhamento opcional com Google Sheets"
-                >
-                  <RefreshCw className={`h-2.5 w-2.5 text-emerald-400 ${sincronizandoNuvem ? 'animate-spin' : ''}`} />
-                  <span>{sincronizandoNuvem ? 'Sync...' : (ultimaSincronizacao ? `Sheets ${ultimaSincronizacao}` : 'Sheets')}</span>
-                </button>
-              ) : isDevMode ? (
-                <button
-                  type="button"
-                  onClick={() => setAbaAtiva('testes')}
-                  className="flex items-center gap-1 text-[10px] text-neutral-400 bg-neutral-900 border border-neutral-800 hover:border-emerald-600/50 hover:text-emerald-400 px-2 py-1 rounded-lg transition-colors"
-                  title="Conectar Google Sheets (Opcional)"
-                >
-                  <FileSpreadsheet className="h-2.5 w-2.5" />
-                  <span>Sheets</span>
-                </button>
-              ) : null}
-
               {/* Seletor rápido de dia para simular o mês (apenas no modo dev ?dev=1) */}
               {isDevMode && (
                 <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1">
@@ -1001,8 +901,8 @@ export default function App() {
                       : 'text-neutral-400 hover:text-neutral-200'
                   }`}
                 >
-                  <FileSpreadsheet className={`h-5 w-5 ${abaAtiva === 'testes' ? 'stroke-[2.5]' : 'stroke-2'}`} />
-                  <span className="text-[11px]">Planilha</span>
+                  <FlaskConical className={`h-5 w-5 ${abaAtiva === 'testes' ? 'stroke-[2.5]' : 'stroke-2'}`} />
+                  <span className="text-[11px]">Testes</span>
                 </button>
               </>
             )}
