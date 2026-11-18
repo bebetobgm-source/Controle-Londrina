@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Users,
@@ -21,10 +21,14 @@ import {
   navegarMes,
   criarConviteParceiroFirestore,
   filtrarLancamentosDoMes,
-  obterRotuloQuem
+  exportarLancamentosCsv
 } from '../services/storage';
-import { Lancamento } from '../types';
+import { SubscriptionData } from '../types';
 import { formatarMoeda, calcularProjecaoFechamento } from '../services/engine';
+import {
+  KIWIFY_AREA_CLIENTE,
+  montarUrlCheckoutKiwify
+} from '../config/planos';
 
 interface Props {
   aberto: boolean;
@@ -32,6 +36,7 @@ interface Props {
   familyId: string | null;
   membrosConectados: string[];
   emailUsuario?: string | null;
+  subscription: SubscriptionData | null;
   appState: AppState;
   setAppState: React.Dispatch<React.SetStateAction<AppState>>;
   onFechar: () => void;
@@ -45,6 +50,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
   familyId,
   membrosConectados,
   emailUsuario,
+  subscription,
   appState,
   setAppState,
   onFechar,
@@ -52,6 +58,12 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
   onSairConta
 }) => {
   const [aba, setAba] = useState<'casal' | 'orcamento' | 'virar_mes' | 'assinatura'>(abaInicial);
+
+  useEffect(() => {
+    if (aberto) {
+      setAba(abaInicial);
+    }
+  }, [aberto, abaInicial]);
 
   // Estado Aba 1: Casal & Convite Seguro de 24 caracteres
   const [nomeFamilia, setNomeFamilia] = useState(appState.config.nome_familia || 'Família Londrina');
@@ -122,12 +134,11 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
     setTimeout(() => setCopiadoLink(false), 2500);
   };
 
-  const handleCompartilharWhatsApp = () => {
-    if (!conviteGerado) return;
-    const texto = `Oi! Criei o orçamento da nossa casa (${nomeFamilia || 'Nossa Família'}) no app. Toque neste link para conectar seu celular ao meu em tempo real (válido por 48h): ${conviteGerado.link}`;
-    const url = `https://wa.me/?text=${encodeURIComponent(texto)}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
-  };
+  const urlCompartilharWhatsApp = conviteGerado
+    ? `https://wa.me/?text=${encodeURIComponent(
+        `Oi! Criei o orçamento da nossa casa (${nomeFamilia || 'Nossa Família'}) no app. Toque neste link para conectar seu celular ao meu em tempo real (válido por 48h): ${conviteGerado.link}`
+      )}`
+    : '#';
 
   const handleSalvarNomesCasal = (e: React.FormEvent) => {
     e.preventDefault();
@@ -174,81 +185,63 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
     }, 2000);
   };
 
-  const handleMudarPlano = (plano: 'trial' | 'mensal' | 'anual') => {
-    const novo = atualizarConfiguracaoCasal({ plano_assinatura: plano }, appState);
-    setAppState(novo);
-    setFeedback(
-      plano === 'anual'
-        ? '👑 Plano Casal Anual (R$ 14,90/mês) ativado!'
-        : plano === 'mensal'
-        ? '✨ Plano Casal Mensal (R$ 19,90/mês) ativado!'
-        : '⏳ Modo de Avaliação Gratuita de 7 dias ativo.'
-    );
-    setTimeout(() => setFeedback(null), 3500);
-  };
-
-  const escaparCampoCsv = (valor: string | number | undefined): string => {
-    const texto = String(valor ?? '').replace(/\r?\n|\r/g, ' ').trim();
-    if (texto.includes(';') || texto.includes('"')) {
-      return `"${texto.replace(/"/g, '""')}"`;
-    }
-    return texto;
-  };
-
-  const gerarEBaixarCsv = (lista: Lancamento[], nomeArquivo: string, rotuloFeedback: string) => {
-    const cabecalho = [
-      'data',
-      'valor',
-      'categoria',
-      'subcategoria',
-      'quem',
-      'estabelecimento',
-      'forma de pagamento'
-    ].join(';');
-
-    const linhas = lista.map(l => {
-      const valorPtBr = l.valor.toFixed(2).replace('.', ',');
-      const quemNome = obterRotuloQuem(l.quem, appState.config);
-      return [
-        escaparCampoCsv(l.data),
-        escaparCampoCsv(valorPtBr),
-        escaparCampoCsv(l.categoria),
-        escaparCampoCsv(l.subcategoria),
-        escaparCampoCsv(quemNome),
-        escaparCampoCsv(l.estabelecimento || ''),
-        escaparCampoCsv(l.forma_pagamento || '')
-      ].join(';');
-    });
-
-    // UTF-8 com BOM (\uFEFF) e separador ponto e vírgula para abrir direto no Excel em português
-    const conteudoCsv = '\uFEFF' + [cabecalho, ...linhas].join('\r\n');
-    const blob = new Blob([conteudoCsv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', nomeArquivo);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    setFeedback(`📥 ${rotuloFeedback} (${lista.length} lançamento${lista.length === 1 ? '' : 's'}) baixado com sucesso!`);
-    setTimeout(() => setFeedback(null), 4000);
-  };
-
   const handleExportarMesAtivoCsv = () => {
     const lancamentosMes = filtrarLancamentosDoMes(appState.lancamentos, appState.mesAtivo);
     const nomeArquivo = `orcamento-${appState.mesAtivo}.csv`;
-    gerarEBaixarCsv(lancamentosMes, nomeArquivo, `CSV de ${formatarMesExibicao(appState.mesAtivo, true)}`);
+    exportarLancamentosCsv(lancamentosMes, appState.config, nomeArquivo);
+    const qtd = lancamentosMes.length;
+    setFeedback(`📥 CSV de ${formatarMesExibicao(appState.mesAtivo, true)} (${qtd} lançamento${qtd === 1 ? '' : 's'}) baixado com sucesso!`);
+    setTimeout(() => setFeedback(null), 4000);
   };
 
   const handleExportarTudoCsv = () => {
     const nomeArquivo = `orcamento-completo-todos-os-meses.csv`;
-    gerarEBaixarCsv(appState.lancamentos, nomeArquivo, 'CSV completo de todos os meses');
+    exportarLancamentosCsv(appState.lancamentos, appState.config, nomeArquivo);
+    const qtd = appState.lancamentos.length;
+    setFeedback(`📥 CSV completo de todos os meses (${qtd} lançamento${qtd === 1 ? '' : 's'}) baixado com sucesso!`);
+    setTimeout(() => setFeedback(null), 4000);
   };
 
   const qtdMembros = Math.min(2, Math.max(1, membrosConectados.length));
+
+  const formatarDataPtBr = (iso: string | null | undefined): string => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  };
+
+  const rotuloPlanoReal = !subscription || subscription.plano === 'trial'
+    ? 'Teste Grátis (7 dias)'
+    : subscription.plano === 'anual'
+    ? 'Anual (R$ 178,80/ano • R$ 14,90/mês)'
+    : 'Mensal (R$ 19,90/mês)';
+
+  const rotuloStatusReal = (() => {
+    const st = subscription?.status || 'trial';
+    if (st === 'active') return 'Ativa';
+    if (st === 'trial') return 'Período de teste';
+    if (st === 'late') return 'Pagamento pendente (tolerância 3 dias)';
+    if (st === 'canceled') return 'Cancelada (acesso até o fim do ciclo)';
+    if (st === 'refunded') return 'Reembolsada / Encerrada';
+    return st;
+  })();
+
+  const rotuloValidadeCiclo = (() => {
+    if (!subscription || subscription.status === 'trial') {
+      return `Fim do teste grátis: ${formatarDataPtBr(subscription?.trialEndsAt)}`;
+    }
+    if (subscription.status === 'active') {
+      return `Próxima cobrança: ${formatarDataPtBr(subscription.currentPeriodEnd)}`;
+    }
+    if (subscription.status === 'late' || subscription.status === 'canceled') {
+      return `Ciclo pago até: ${formatarDataPtBr(subscription.currentPeriodEnd)}`;
+    }
+    return 'Assinatura encerrada';
+  })();
+
+  const urlCheckoutMensal = montarUrlCheckoutKiwify('mensal', emailUsuario, familyId);
+  const urlCheckoutAnual = montarUrlCheckoutKiwify('anual', emailUsuario, familyId);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 sm:p-4 backdrop-blur-sm animate-in fade-in">
@@ -385,14 +378,15 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                             <span>{copiadoLink ? 'Link Copiado!' : 'Copiar Link'}</span>
                           </button>
 
-                          <button
-                            type="button"
-                            onClick={handleCompartilharWhatsApp}
+                          <a
+                            href={urlCompartilharWhatsApp}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 py-2.5 text-xs font-extrabold text-neutral-950 transition-colors"
                           >
                             <MessageCircle className="h-3.5 w-3.5" />
                             <span>Enviar no WhatsApp</span>
-                          </button>
+                          </a>
                         </div>
                       </div>
                     )}
@@ -583,29 +577,108 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
 
           {aba === 'assinatura' && (
             <div className="space-y-4">
-              {/* Status Atual da Assinatura */}
-              <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-4 space-y-2">
-                <div className="flex items-center justify-between">
+              {/* Status Real da Assinatura (subscriptions/{familyId}) */}
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-4 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-emerald-300 uppercase flex items-center gap-1.5">
                     <Crown className="h-4 w-4 text-emerald-400" />
-                    <span>Plano Atual do Casal</span>
+                    <span>Assinatura da Família</span>
                   </span>
                   <span className="rounded bg-emerald-400/20 px-2 py-0.5 text-[10px] font-mono font-bold text-emerald-300 uppercase">
-                    {appState.config.plano_assinatura === 'anual'
-                      ? 'Anual Ativo (R$ 14,90/mês)'
-                      : appState.config.plano_assinatura === 'mensal'
-                      ? 'Mensal Ativo (R$ 19,90/mês)'
-                      : 'Teste Grátis 7 Dias'}
+                    {rotuloStatusReal}
                   </span>
                 </div>
-                <p className="text-xs text-neutral-300 leading-relaxed">
-                  Sua assinatura cobre os 2 celulares do casal com sincronização em tempo real no Firestore e cache offline automático.
-                </p>
+
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-neutral-400">Plano atual:</span>
+                    <strong className="font-mono text-white">{rotuloPlanoReal}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-400">Vigência:</span>
+                    <strong className="font-mono text-emerald-300">{rotuloValidadeCiclo}</strong>
+                  </div>
+                </div>
+
                 {emailUsuario && (
-                  <p className="text-[11px] font-mono text-neutral-400 pt-1 border-t border-emerald-500/20">
-                    Conta Google conectada: <strong className="text-white">{emailUsuario}</strong>
+                  <p className="text-[11px] font-mono text-neutral-400 pt-2 border-t border-emerald-500/20">
+                    Conta Google: <strong className="text-white">{emailUsuario}</strong>
                   </p>
                 )}
+              </div>
+
+              {/* Botões Reais de Checkout Kiwify (Mensal e Anual) */}
+              <div className="space-y-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-neutral-300 block">
+                  Assinar Plano Casal (2 aparelhos inclusos)
+                </span>
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <a
+                    href={urlCheckoutMensal}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`rounded-xl border p-3.5 text-left transition-all flex flex-col justify-between ${
+                      subscription?.plano === 'mensal' && subscription?.status === 'active'
+                        ? 'border-emerald-400 bg-neutral-800/80'
+                        : 'border-neutral-800 bg-neutral-950 hover:border-emerald-500/50'
+                    }`}
+                  >
+                    <div>
+                      <span className="text-xs font-bold text-white block">Plano Mensal</span>
+                      <span className="font-mono text-base font-extrabold text-emerald-400 block mt-0.5">
+                        R$ 19,90/mês
+                      </span>
+                      <span className="text-[10px] text-neutral-400 block mt-0.5">
+                        Renovação mensal • Cancele quando quiser
+                      </span>
+                    </div>
+                    <span className="mt-3 inline-flex items-center justify-center gap-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 px-3 py-2 text-[11px] font-extrabold text-white">
+                      <span>Assinar Mensal</span>
+                      <ExternalLink className="h-3 w-3 text-emerald-400" />
+                    </span>
+                  </a>
+
+                  <a
+                    href={urlCheckoutAnual}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`rounded-xl border p-3.5 text-left transition-all flex flex-col justify-between ${
+                      subscription?.plano === 'anual' && subscription?.status === 'active'
+                        ? 'border-emerald-400 bg-neutral-800/80'
+                        : 'border-emerald-500/40 bg-emerald-950/20 hover:border-emerald-400'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-white">Plano Anual</span>
+                        <span className="rounded bg-emerald-400 px-1.5 py-0.5 text-[9px] font-extrabold text-neutral-950 uppercase">
+                          -25% OFF
+                        </span>
+                      </div>
+                      <span className="font-mono text-base font-extrabold text-emerald-400 block mt-0.5">
+                        R$ 14,90/mês
+                      </span>
+                      <span className="text-[10px] text-neutral-300 block mt-0.5">
+                        R$ 178,80/ano • Economize R$ 60
+                      </span>
+                    </div>
+                    <span className="mt-3 inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-400 hover:bg-emerald-300 px-3 py-2 text-[11px] font-extrabold text-neutral-950">
+                      <span>Assinar Anual</span>
+                      <ExternalLink className="h-3 w-3" />
+                    </span>
+                  </a>
+                </div>
+
+                {/* Link para Gerenciar Assinatura na Kiwify */}
+                <a
+                  href={KIWIFY_AREA_CLIENTE}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-950 hover:bg-neutral-800 px-4 py-2.5 text-xs font-semibold text-neutral-300 hover:text-white transition-colors"
+                >
+                  <span>Gerenciar assinatura (Kiwify)</span>
+                  <ExternalLink className="h-3.5 w-3.5 text-neutral-400" />
+                </a>
               </div>
 
               {/* Exportar Dados (CSV compatível com Excel em português) */}
@@ -638,37 +711,6 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                     <span>Exportar tudo</span>
                   </button>
                 </div>
-              </div>
-
-              {/* Alternar Planos */}
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => handleMudarPlano('mensal')}
-                  className={`rounded-xl border p-3 text-left transition-all ${
-                    appState.config.plano_assinatura === 'mensal'
-                      ? 'border-emerald-400 bg-neutral-800'
-                      : 'border-neutral-800 bg-neutral-950 hover:border-neutral-700'
-                  }`}
-                >
-                  <span className="text-xs font-bold text-white block">Plano Mensal</span>
-                  <span className="font-mono text-base font-extrabold text-emerald-400">R$ 19,90/mês</span>
-                  <span className="text-[10px] text-neutral-400 block mt-0.5">2 aparelhos inclusos</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleMudarPlano('anual')}
-                  className={`rounded-xl border p-3 text-left transition-all ${
-                    appState.config.plano_assinatura === 'anual'
-                      ? 'border-emerald-400 bg-neutral-800'
-                      : 'border-neutral-800 bg-neutral-950 hover:border-neutral-700'
-                  }`}
-                >
-                  <span className="text-xs font-bold text-white block">Plano Anual (-25%)</span>
-                  <span className="font-mono text-base font-extrabold text-emerald-400">R$ 14,90/mês</span>
-                  <span className="text-[10px] text-neutral-400 block mt-0.5">Economize R$ 60/ano</span>
-                </button>
               </div>
 
               <div className="border-t border-neutral-800 pt-3 space-y-2.5">
@@ -705,3 +747,4 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
     </div>
   );
 };
+

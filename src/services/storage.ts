@@ -21,7 +21,10 @@ import {
   TransacaoReserva,
   Configuracao,
   AlertaLog,
-  Quem
+  Quem,
+  SubscriptionData,
+  SubscriptionStatus,
+  SubscriptionPlan
 } from '../types';
 import {
   CONFIG_PADRAO,
@@ -142,8 +145,6 @@ export function carregarEstado(): AppState {
         nome_familia: CONFIG_PADRAO.nome_familia || 'Nossa Família',
         nome_parceiro_1: CONFIG_PADRAO.nome_parceiro_1 || 'Ele',
         nome_parceiro_2: CONFIG_PADRAO.nome_parceiro_2 || 'Ela',
-        plano_assinatura: 'trial',
-        data_inicio_trial: new Date().toISOString().split('T')[0],
         onboarding_concluido: true
       },
       alertasLog: [],
@@ -786,8 +787,6 @@ export function aplicarOnboardingNovoCasal(
     renda_liquida_mensal: dados.rendaLiquida > 0 ? dados.rendaLiquida : 6500,
     meta_reserva_mensal: dados.metaReservaMensal >= 0 ? dados.metaReservaMensal : 200,
     colchao_meta: dados.metaColchaoTotal > 0 ? dados.metaColchaoTotal : 4600,
-    plano_assinatura: 'trial',
-    data_inicio_trial: hoje,
     onboarding_concluido: true
   };
 
@@ -836,7 +835,229 @@ export function aplicarOnboardingNovoCasal(
 export interface UserProfileFirestore {
   familyId?: string;
   nome: string;
+  email?: string;
   criadoEm: string;
+}
+
+export async function salvarEmailUsuarioNoFirestore(
+  uid: string,
+  email?: string | null,
+  nome?: string | null
+): Promise<void> {
+  if (!uid || !email) return;
+  const path = `users/${uid}`;
+  try {
+    await setDoc(
+      doc(db, 'users', uid),
+      {
+        email: email.trim().toLowerCase(),
+        ...(nome ? { nome } : {})
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export async function garantirAssinaturaTrialFirestore(
+  familyId: string,
+  buyerEmail?: string | null
+): Promise<void> {
+  if (!familyId) return;
+  const path = `subscriptions/${familyId}`;
+  try {
+    const subRef = doc(db, 'subscriptions', familyId);
+    const snap = await getDoc(subRef);
+    if (!snap.exists()) {
+      const trialEndsAt = Timestamp.fromDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+      await setDoc(subRef, {
+        status: 'trial',
+        plano: 'trial',
+        trialEndsAt,
+        currentPeriodEnd: null,
+        buyerEmail: (buyerEmail || auth.currentUser?.email || '').trim().toLowerCase(),
+        kiwifyOrderId: '',
+        kiwifySubscriptionId: '',
+        eventosProcessados: [],
+        updatedAt: Timestamp.now()
+      });
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+function converterTimestampParaDate(valor: any): Date | null {
+  if (!valor) return null;
+  if (typeof valor.toDate === 'function') {
+    return valor.toDate();
+  }
+  if (valor instanceof Date) {
+    return valor;
+  }
+  if (typeof valor.seconds === 'number') {
+    return new Date(valor.seconds * 1000);
+  }
+  const parsed = new Date(valor);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function assinarSubscriptionTempoReal(
+  familyId: string,
+  onUpdate: (sub: SubscriptionData) => void
+): Unsubscribe {
+  const path = `subscriptions/${familyId}`;
+  let criandoTrial = false;
+
+  return onSnapshot(
+    doc(db, 'subscriptions', familyId),
+    snap => {
+      if (!snap.exists()) {
+        if (!criandoTrial) {
+          criandoTrial = true;
+          garantirAssinaturaTrialFirestore(familyId, auth.currentUser?.email).finally(() => {
+            criandoTrial = false;
+          });
+        }
+        return;
+      }
+
+      const d = snap.data();
+      const sub: SubscriptionData = {
+        status: (d.status as SubscriptionStatus) || 'trial',
+        plano: (d.plano as SubscriptionPlan) || 'trial',
+        trialEndsAt: converterTimestampParaDate(d.trialEndsAt),
+        currentPeriodEnd: converterTimestampParaDate(d.currentPeriodEnd),
+        buyerEmail: d.buyerEmail || '',
+        kiwifyOrderId: d.kiwifyOrderId || '',
+        kiwifySubscriptionId: d.kiwifySubscriptionId || '',
+        eventosProcessados: Array.isArray(d.eventosProcessados) ? d.eventosProcessados : [],
+        updatedAt: converterTimestampParaDate(d.updatedAt)
+      };
+      onUpdate(sub);
+    },
+    err => handleFirestoreError(err, OperationType.GET, path)
+  );
+}
+
+export function avaliarAcessoAssinatura(
+  sub: SubscriptionData | null,
+  agora = new Date()
+): {
+  temAcesso: boolean;
+  diasRestantesTrial: number;
+  emTrial: boolean;
+} {
+  if (!sub) {
+    return { temAcesso: true, diasRestantesTrial: 7, emTrial: true };
+  }
+
+  const agoraMs = agora.getTime();
+  const trialEndMs = sub.trialEndsAt ? sub.trialEndsAt.getTime() : 0;
+  const periodEndMs = sub.currentPeriodEnd ? sub.currentPeriodEnd.getTime() : 0;
+
+  const diasRestantesTrial = trialEndMs > agoraMs
+    ? Math.max(1, Math.ceil((trialEndMs - agoraMs) / (1000 * 60 * 60 * 24)))
+    : 0;
+
+  switch (sub.status) {
+    case 'active':
+      return { temAcesso: true, diasRestantesTrial: 0, emTrial: false };
+    case 'trial':
+      return {
+        temAcesso: trialEndMs > 0 ? agoraMs < trialEndMs : false,
+        diasRestantesTrial,
+        emTrial: trialEndMs > agoraMs
+      };
+    case 'late': {
+      const tolerancia3DiasMs = periodEndMs + 3 * 24 * 60 * 60 * 1000;
+      return {
+        temAcesso: periodEndMs > 0 ? agoraMs < tolerancia3DiasMs : false,
+        diasRestantesTrial: 0,
+        emTrial: false
+      };
+    }
+    case 'canceled':
+      return {
+        temAcesso: periodEndMs > 0 ? agoraMs < periodEndMs : false,
+        diasRestantesTrial: 0,
+        emTrial: false
+      };
+    case 'refunded':
+    default:
+      return { temAcesso: false, diasRestantesTrial: 0, emTrial: false };
+  }
+}
+
+export async function reivindicarComprasPendentesKiwify(
+  familyId?: string | null
+): Promise<void> {
+  try {
+    const user = auth.currentUser;
+    if (!user) return;
+    const idToken = await user.getIdToken();
+    await fetch('/api/claim', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`
+      },
+      body: JSON.stringify({ familyId: familyId || activeFamilyId })
+    });
+  } catch {
+    // Silencioso caso o endpoint backend não esteja acessível em modo estático
+  }
+}
+
+export function exportarLancamentosCsv(
+  lista: Lancamento[],
+  config: Configuracao,
+  nomeArquivo: string
+): void {
+  const escaparCampoCsv = (valor: string | number | undefined): string => {
+    const texto = String(valor ?? '').replace(/\r?\n|\r/g, ' ').trim();
+    if (texto.includes(';') || texto.includes('"')) {
+      return `"${texto.replace(/"/g, '""')}"`;
+    }
+    return texto;
+  };
+
+  const cabecalho = [
+    'data',
+    'valor',
+    'categoria',
+    'subcategoria',
+    'quem',
+    'estabelecimento',
+    'forma de pagamento'
+  ].join(';');
+
+  const linhas = lista.map(l => {
+    const valorPtBr = l.valor.toFixed(2).replace('.', ',');
+    const quemNome = obterRotuloQuem(l.quem, config);
+    return [
+      escaparCampoCsv(l.data),
+      escaparCampoCsv(valorPtBr),
+      escaparCampoCsv(l.categoria),
+      escaparCampoCsv(l.subcategoria),
+      escaparCampoCsv(quemNome),
+      escaparCampoCsv(l.estabelecimento || ''),
+      escaparCampoCsv(l.forma_pagamento || '')
+    ].join(';');
+  });
+
+  const conteudoCsv = '\uFEFF' + [cabecalho, ...linhas].join('\r\n');
+  const blob = new Blob([conteudoCsv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', nomeArquivo);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export async function obterPerfilUsuarioFirestore(uid: string): Promise<UserProfileFirestore | null> {
@@ -858,6 +1079,7 @@ export async function criarFamiliaNoFirestore(
 ): Promise<string> {
   const familyId = `fam-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
   const agoraIso = new Date().toISOString();
+  const emailUsuario = (auth.currentUser?.email || '').trim().toLowerCase();
 
   try {
     // 1. Criar documento principal da família (regra: request.resource.data.members == [request.auth.uid])
@@ -872,18 +1094,22 @@ export async function criarFamiliaNoFirestore(
       conviteUsado: ''
     });
 
-    // 2. Salvar familyId em users/{uid}
+    // 2. Salvar familyId e email em users/{uid}
     await setDoc(
       doc(db, 'users', uid),
       {
         familyId,
         nome: nomeUsuario || estadoInicial.config.nome_parceiro_1 || 'Parceiro 1',
+        ...(emailUsuario ? { email: emailUsuario } : {}),
         criadoEm: agoraIso
       },
       { merge: true }
     );
 
-    // 3. Gravar subcoleções iniciais em lotes de no máximo 400 operações cada
+    // 3. Criar subscriptions/{familyId} inicial em trial de 7 dias
+    await garantirAssinaturaTrialFirestore(familyId, emailUsuario);
+
+    // 4. Gravar subcoleções iniciais em lotes de no máximo 400 operações cada
     // Garantir que FIXAS_PADRAO, LANCAMENTOS_INICIAIS e RESERVA_INICIAL de defaultData.ts NUNCA sejam gravados
     const descricoesFixasPadrao = new Set(
       FIXAS_PADRAO.map(fp => `${fp.descricao.trim().toLowerCase()}|${fp.valor}|${fp.dia_vencimento}`)
@@ -1274,6 +1500,7 @@ export async function aceitarConviteFamiliaFirestore(token: string): Promise<{
       {
         familyId,
         nome: user.displayName || 'Parceiro(a)',
+        ...(user.email ? { email: user.email.trim().toLowerCase() } : {}),
         criadoEm: new Date().toISOString()
       },
       { merge: true }

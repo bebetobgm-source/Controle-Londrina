@@ -13,13 +13,17 @@
           "type": "string",
           "description": "Display name of the user"
         },
+        "email": {
+          "type": "string",
+          "description": "Email address of the user from Google Auth"
+        },
         "criadoEm": {
           "type": "string",
           "format": "date-time",
           "description": "Creation timestamp"
         }
       },
-      "required": ["familyId", "nome", "criadoEm"]
+      "required": ["nome", "criadoEm"]
     },
     "Family": {
       "title": "Family",
@@ -61,6 +65,74 @@
         }
       },
       "required": ["nomeFamilia", "members", "config", "orcamento", "categorias", "mesAtivo", "criadoEm"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "Family SaaS subscription state managed by server-side Kiwify webhooks.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["trial", "active", "late", "canceled", "refunded"]
+        },
+        "plano": {
+          "type": "string",
+          "enum": ["trial", "mensal", "anual"]
+        },
+        "trialEndsAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "currentPeriodEnd": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "buyerEmail": {
+          "type": "string"
+        },
+        "kiwifyOrderId": {
+          "type": "string"
+        },
+        "kiwifySubscriptionId": {
+          "type": "string"
+        },
+        "eventosProcessados": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["status", "plano", "trialEndsAt"]
+    },
+    "PendingPurchase": {
+      "title": "PendingPurchase",
+      "description": "Kiwify purchase awaiting user login and family association.",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string" },
+        "buyerEmail": { "type": "string" },
+        "status": { "type": "string" },
+        "plano": { "type": "string" },
+        "currentPeriodEnd": { "type": "string", "format": "date-time" },
+        "kiwifySubscriptionId": { "type": "string" },
+        "evento": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orderId", "buyerEmail", "status", "plano"]
+    },
+    "WebhookLog": {
+      "title": "WebhookLog",
+      "description": "Raw Kiwify webhook event payload log for debugging.",
+      "type": "object",
+      "properties": {
+        "data": { "type": "string", "format": "date-time" },
+        "evento": { "type": "string" },
+        "orderId": { "type": "string" },
+        "payload": { "type": "object" }
+      },
+      "required": ["data"]
     },
     "Lancamento": {
       "title": "Lancamento",
@@ -162,7 +234,7 @@
   "firestore": {
     "/users/{uid}": {
       "schema": "User",
-      "description": "User profile document storing the active familyId."
+      "description": "User profile document storing the active familyId and email."
     },
     "/families/{familyId}": {
       "schema": "Family",
@@ -191,6 +263,18 @@
     "/invites/{token}": {
       "schema": "Invite",
       "description": "48-hour single-use invite token for linking the second partner."
+    },
+    "/subscriptions/{familyId}": {
+      "schema": "Subscription",
+      "description": "Server-managed subscription status for the family."
+    },
+    "/pendingPurchases/{id}": {
+      "schema": "PendingPurchase",
+      "description": "Server-only pending Kiwify purchases awaiting claim."
+    },
+    "/webhookLog/{id}": {
+      "schema": "WebhookLog",
+      "description": "Server-only audit log of incoming Kiwify webhooks."
     }
   }
 }

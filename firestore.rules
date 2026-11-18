@@ -43,5 +43,16 @@ service cloud.firestore {
         && request.resource.data.used == true
         && request.resource.data.usedBy == request.auth.uid;
     }
+
+    match /subscriptions/{familyId} {
+      allow read: if isMember(familyId);
+      allow create: if isMember(familyId)
+        && request.resource.data.status == 'trial'
+        && request.resource.data.plano == 'trial'
+        && request.resource.data.trialEndsAt <= request.time + duration.value(8, 'd');
+      allow update, delete: if false;
+    }
+    match /pendingPurchases/{id} { allow read, write: if false; }
+    match /webhookLog/{id} { allow read, write: if false; }
   }
 }

@@ -19,8 +19,15 @@ import {
   verificarFamiliaVaziaNoFirestore,
   migrarDadosLocalStorageParaFirestore,
   limparChavesAntigasLocalStorage,
-  definirFamilyIdAtivo
+  definirFamilyIdAtivo,
+  salvarEmailUsuarioNoFirestore,
+  assinarSubscriptionTempoReal,
+  avaliarAcessoAssinatura,
+  reivindicarComprasPendentesKiwify,
+  exportarLancamentosCsv
 } from './services/storage';
+import { SubscriptionData } from './types';
+import { montarUrlCheckoutKiwify } from './config/planos';
 import { LancamentoRapido } from './components/LancamentoRapido';
 import { PainelDoMes } from './components/PainelDoMes';
 import { ConselheiroView } from './components/ConselheiroView';
@@ -46,7 +53,11 @@ import {
   Crown,
   CloudUpload,
   CheckCircle2,
-  FlaskConical
+  FlaskConical,
+  Download,
+  LogOut,
+  ExternalLink,
+  ShieldCheck
 } from 'lucide-react';
 import {
   observeFirebaseAuth,
@@ -81,6 +92,10 @@ export default function App() {
   const [salvandoOnboarding, setSalvandoOnboarding] = useState<boolean>(false);
   const [membrosConectados, setMembrosConectados] = useState<string[]>([]);
   const [exibirVitrineLanding, setExibirVitrineLanding] = useState<boolean>(false);
+
+  // Assinatura Real (subscriptions/{familyId})
+  const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
+  const [subscriptionCarregada, setSubscriptionCarregada] = useState<boolean>(false);
 
   // Fluxo de Convite Seguro (24 caracteres)
   const [tokenConvitePendente, setTokenConvitePendente] = useState<string | null>(() => {
@@ -144,6 +159,8 @@ export default function App() {
       if (!user) {
         setFamilyId(null);
         setDadosFamiliaCarregados(false);
+        setSubscription(null);
+        setSubscriptionCarregada(false);
         definirFamilyIdAtivo(null);
         setPrecisaOnboarding(false);
       }
@@ -154,7 +171,7 @@ export default function App() {
     };
   }, []);
 
-  // 4. Quando o usuário faz login: validar convite pendente (se houver) e buscar users/{uid}
+  // 4. Quando o usuário faz login: gravar e-mail em users/{uid}.email, validar convite pendente e buscar users/{uid}
   const validarTokenConvite = useCallback(async (token: string) => {
     const res = await consultarConviteFirestore(token);
     if (!res.valido || !res.convite) {
@@ -175,6 +192,12 @@ export default function App() {
     async function carregarPerfilEFamilia() {
       setCarregandoFamilia(true);
       try {
+        await salvarEmailUsuarioNoFirestore(
+          usuarioAtual!.uid,
+          usuarioAtual!.email,
+          usuarioAtual!.displayName
+        );
+
         if (tokenConvitePendente) {
           await validarTokenConvite(tokenConvitePendente);
         }
@@ -207,12 +230,16 @@ export default function App() {
     };
   }, [usuarioAtual, tokenConvitePendente, validarTokenConvite]);
 
-  // 5. Assinar em tempo real (onSnapshot) a família ativa no Firestore e verificar migração do localStorage
+  // 5. Assinar em tempo real (onSnapshot) a família ativa e subscriptions/{familyId} no Firestore + POST /api/claim
   useEffect(() => {
     if (!usuarioAtual || !familyId) return;
 
     let cancelado = false;
     setDadosFamiliaCarregados(false);
+    setSubscriptionCarregada(false);
+
+    // Reivindicar possíveis compras pendentes na Kiwify (POST /api/claim)
+    reivindicarComprasPendentesKiwify(familyId);
 
     // Verificar se há dados antigos no localStorage e se a família no Firestore está vazia
     async function checarMigracaoInicial() {
@@ -224,7 +251,7 @@ export default function App() {
     }
     checarMigracaoInicial();
 
-    const unsubscribe = assinarFamiliaTempoReal(familyId, (parcial, meta) => {
+    const unsubscribeFamilia = assinarFamiliaTempoReal(familyId, (parcial, meta) => {
       if (meta?.members) {
         setMembrosConectados(meta.members);
       }
@@ -235,11 +262,21 @@ export default function App() {
       setDadosFamiliaCarregados(true);
     });
 
+    const unsubscribeSubscription = assinarSubscriptionTempoReal(familyId, sub => {
+      setSubscription(sub);
+      setSubscriptionCarregada(true);
+    });
+
     return () => {
       cancelado = true;
-      unsubscribe();
+      unsubscribeFamilia();
+      unsubscribeSubscription();
     };
   }, [usuarioAtual, familyId]);
+
+  const infoAcesso = useMemo(() => {
+    return avaliarAcessoAssinatura(subscription);
+  }, [subscription]);
 
   const handleEntrarComGoogle = async () => {
     setCarregandoLogin(true);
@@ -258,6 +295,8 @@ export default function App() {
     await googleSignOut();
     setFamilyId(null);
     setDadosFamiliaCarregados(false);
+    setSubscription(null);
+    setSubscriptionCarregada(false);
     definirFamilyIdAtivo(null);
     setExibirVitrineLanding(false);
   };
@@ -517,7 +556,7 @@ export default function App() {
   }
 
   // Enquanto o onSnapshot ainda não carregou os dados da família no Firestore, mostrar estado de carregando (e nunca dados de exemplo)
-  if (familyId && !dadosFamiliaCarregados) {
+  if (familyId && (!dadosFamiliaCarregados || !subscriptionCarregada)) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-4">
         <div className="flex flex-col items-center gap-3">
@@ -525,6 +564,118 @@ export default function App() {
           <p className="text-xs font-mono text-neutral-400">
             Carregando orçamento da família...
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ETAPA 2 — CONTROLE DE ACESSO: Sem acesso, mostrar tela "Seu período terminou" (nunca apagar dados)
+  if (familyId && subscriptionCarregada && !infoAcesso.temAcesso) {
+    const urlCheckoutMensal = montarUrlCheckoutKiwify('mensal', usuarioAtual.email, familyId);
+    const urlCheckoutAnual = montarUrlCheckoutKiwify('anual', usuarioAtual.email, familyId);
+
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-900 p-6 shadow-2xl space-y-5">
+          <div className="space-y-2 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              <Crown className="h-6 w-6" />
+            </div>
+            <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 block">
+              {appState.config.nome_familia || 'Orçamento do Casal'}
+            </span>
+            <h1 className="text-xl font-extrabold text-white">
+              Seu período terminou
+            </h1>
+            <p className="text-xs text-neutral-300 leading-relaxed">
+              Todos os lançamentos, metas e histórico do casal continuam salvos e protegidos na nuvem. Escolha um plano abaixo para liberar o acesso imediato nos 2 celulares:
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {/* Plano Mensal */}
+            <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-4 flex flex-col justify-between space-y-3">
+              <div>
+                <span className="text-xs font-bold text-neutral-200 block">Plano Mensal</span>
+                <div className="mt-1 flex items-baseline gap-1">
+                  <span className="font-mono text-xl font-extrabold text-white">R$ 19,90</span>
+                  <span className="text-[11px] text-neutral-400">/mês</span>
+                </div>
+                <p className="text-[11px] text-neutral-400 mt-1">
+                  2 celulares sincronizados • Cancele quando quiser
+                </p>
+              </div>
+              <a
+                href={urlCheckoutMensal}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 py-2.5 text-xs font-extrabold text-white transition-all"
+              >
+                <span>Assinar Mensal</span>
+                <ExternalLink className="h-3.5 w-3.5 text-emerald-400" />
+              </a>
+            </div>
+
+            {/* Plano Anual */}
+            <div className="rounded-xl border border-emerald-500/50 bg-emerald-950/20 p-4 flex flex-col justify-between space-y-3 relative">
+              <div>
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-bold text-white">Plano Anual</span>
+                  <span className="rounded bg-emerald-400 px-1.5 py-0.5 text-[9px] font-extrabold text-neutral-950 uppercase">
+                    R$ 14,90/mês
+                  </span>
+                </div>
+                <div className="mt-1 flex items-baseline gap-1">
+                  <span className="font-mono text-xl font-extrabold text-emerald-400">R$ 178,80</span>
+                  <span className="text-[11px] text-neutral-300">/ano</span>
+                </div>
+                <p className="text-[11px] text-neutral-300 mt-1">
+                  Equivalente a R$ 14,90/mês • Economize R$ 60/ano
+                </p>
+              </div>
+              <a
+                href={urlCheckoutAnual}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-400 hover:bg-emerald-300 py-2.5 text-xs font-extrabold text-neutral-950 transition-all shadow-lg shadow-emerald-500/20"
+              >
+                <span>Assinar Anual</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-neutral-800 bg-neutral-950/80 p-3 flex items-center gap-2.5 text-[11px] text-neutral-300">
+            <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
+            <span>
+              Já realizou o pagamento? Assim que a Kiwify confirmar, sua tela será liberada automaticamente em tempo real.
+            </span>
+          </div>
+
+          <div className="pt-2 border-t border-neutral-800 flex flex-col sm:flex-row gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                exportarLancamentosCsv(
+                  appState.lancamentos,
+                  appState.config,
+                  'orcamento-completo-todos-os-meses.csv'
+                )
+              }
+              className="flex-1 flex items-center justify-center gap-1.5 rounded-xl border border-neutral-700 bg-neutral-950 hover:bg-neutral-800 py-2.5 px-3 text-xs font-bold text-white transition-colors"
+            >
+              <Download className="h-3.5 w-3.5 text-emerald-400" />
+              <span>Exportar meus dados (CSV)</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleSairConta}
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-rose-900/60 bg-rose-950/30 hover:bg-rose-950/60 py-2.5 px-4 text-xs font-bold text-rose-300 transition-colors"
+            >
+              <LogOut className="h-3.5 w-3.5 text-rose-400" />
+              <span>Sair</span>
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -581,6 +732,25 @@ export default function App() {
           abaAtiva === 'lancamento' ? 'pb-44' : 'pb-24'
         }`}
       >
+        {/* Banner Discreto no Topo Durante o Trial */}
+        {infoAcesso.emTrial && infoAcesso.temAcesso && (
+          <div
+            id="banner-trial-topo"
+            className="mt-2 flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-950/30 px-3 py-1.5 text-[11px] text-emerald-200"
+          >
+            <span>
+              Teste grátis: <strong>{infoAcesso.diasRestantesTrial} {infoAcesso.diasRestantesTrial === 1 ? 'dia restante' : 'dias restantes'}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={() => handleAbrirConfigSaaS('assinatura')}
+              className="font-extrabold text-emerald-400 hover:text-emerald-300 underline underline-offset-2"
+            >
+              Assinar
+            </button>
+          </div>
+        )}
+
         {/* Aviso de Navegador Interno do WhatsApp/Instagram */}
         {isInAppBrowser && (
           <div className="mt-2 rounded-xl bg-amber-950/80 border border-amber-600/50 p-3 text-xs text-amber-200 animate-in fade-in">
@@ -820,6 +990,7 @@ export default function App() {
           familyId={familyId}
           membrosConectados={membrosConectados}
           emailUsuario={usuarioAtual.email}
+          subscription={subscription}
           appState={appState}
           setAppState={setAppState}
           onFechar={() => setModalSaaSAberto(false)}
@@ -912,3 +1083,4 @@ export default function App() {
     </div>
   );
 }
+

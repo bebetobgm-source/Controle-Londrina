@@ -65,6 +65,21 @@ export interface TransacaoReserva {
   saldo_acumulado: number;
 }
 
+export type SubscriptionStatus = 'trial' | 'active' | 'late' | 'canceled' | 'refunded';
+export type SubscriptionPlan = 'trial' | 'mensal' | 'anual';
+
+export interface SubscriptionData {
+  status: SubscriptionStatus;
+  plano: SubscriptionPlan;
+  trialEndsAt: Date | null;
+  currentPeriodEnd: Date | null;
+  buyerEmail?: string;
+  kiwifyOrderId?: string;
+  kiwifySubscriptionId?: string;
+  eventosProcessados?: string[];
+  updatedAt?: Date | string | null;
+}
+
 export interface Configuracao {
   renda_liquida_mensal: number;
   dia_pagamento: number;
@@ -80,8 +95,6 @@ export interface Configuracao {
   nome_familia?: string;
   nome_parceiro_1?: string;
   nome_parceiro_2?: string;
-  plano_assinatura?: 'trial' | 'mensal' | 'anual';
-  data_inicio_trial?: string;
   onboarding_concluido?: boolean;
 }
 
