@@ -9,7 +9,9 @@ import {
   excluirRendaExtra,
   registrarAporteReserva,
   excluirTransacaoReserva,
-  obterRotuloQuem
+  obterRotuloQuem,
+  filtrarLancamentosDoMes,
+  obterMesAtualPadrao
 } from '../services/storage';
 import { ESTABELECIMENTOS_SUGERIDOS, CATEGORIAS_RENDA_EXTRA, SUGESTOES_RENDA_EXTRA } from '../data/defaultData';
 import {
@@ -310,31 +312,59 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
     setAlertaRecente(null);
   };
 
+  const ultimosTresLancamentos = useMemo(() => {
+    const mesRef = appState.mesAtivo || obterMesAtualPadrao();
+    return filtrarLancamentosDoMes(appState.lancamentos, mesRef).slice(0, 3);
+  }, [appState.lancamentos, appState.mesAtivo]);
+
+  const formatarDataCurta = (dataIso: string) => {
+    if (!dataIso || !dataIso.includes('-')) return dataIso;
+    const partes = dataIso.split('-');
+    if (partes.length < 3) return dataIso;
+    return `${partes[2]}/${partes[1]}`;
+  };
+
   return (
-    <div id="tela-lancamento-rapido" className="flex flex-col pb-28 pt-2">
+    <div id="tela-lancamento-rapido" className="flex flex-col pt-2">
       {/* Toast de Impacto Imediato e Desfazer (< 10 segundos) */}
       {feedbackImpacto && (
         <div id="toast-impacto-imediato" className="mb-4 rounded-xl border border-emerald-500/40 bg-neutral-900 p-4 text-neutral-100 shadow-xl shadow-black/60 animate-in fade-in slide-in-from-top-3">
           <div className="flex items-start gap-3">
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
             <div className="flex-1">
+              {ultimoTipoLancado === 'despesa' && (
+                <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-400 block mb-0.5">
+                  Gasto salvo
+                </span>
+              )}
               <p className="text-sm font-semibold leading-snug text-neutral-100">{feedbackImpacto}</p>
               {alertaRecente && (
                 <p className="mt-2 text-xs font-medium text-amber-300 bg-amber-950/40 border border-amber-800/40 rounded px-2 py-1">
                   ⚠️ {alertaRecente.mensagem}
                 </p>
               )}
-              <div className="mt-3 flex items-center justify-between">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs text-neutral-400">Desfazer disponível ({tempoDesfazer}s)</span>
-                <button
-                  id="btn-desfazer-lancamento"
-                  type="button"
-                  onClick={handleDesfazer}
-                  className="flex items-center gap-1.5 rounded-lg border border-amber-500/60 bg-amber-500/10 px-3 py-1 text-xs font-bold text-amber-300 hover:bg-amber-500/20 active:scale-95 transition-all"
-                >
-                  <Undo2 className="h-3.5 w-3.5" />
-                  Desfazer
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    id="btn-ver-lancamentos-toast"
+                    type="button"
+                    onClick={onAcessarPainel}
+                    className="flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-300 hover:bg-emerald-500/25 active:scale-95 transition-all"
+                  >
+                    <span>Ver lançamentos</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    id="btn-desfazer-lancamento"
+                    type="button"
+                    onClick={handleDesfazer}
+                    className="flex items-center gap-1.5 rounded-lg border border-amber-500/60 bg-amber-500/10 px-3 py-1 text-xs font-bold text-amber-300 hover:bg-amber-500/20 active:scale-95 transition-all"
+                  >
+                    <Undo2 className="h-3.5 w-3.5" />
+                    Desfazer
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -723,8 +753,62 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
         </>
       )}
 
-      {/* Botão SALVAR Fixo na Base da Tela, Sempre Visível */}
-      <div id="container-salvar-fixo" className="fixed bottom-0 left-0 right-0 z-40 border-t border-neutral-800/80 bg-neutral-950/95 p-3.5 backdrop-blur-md">
+      {/* Últimos 3 Lançamentos do Mês para consulta rápida */}
+      <div id="resumo-ultimos-lancamentos" className="mt-5 rounded-2xl border border-neutral-800 bg-neutral-900/70 p-3.5">
+        <div className="flex items-center justify-between mb-2.5">
+          <span className="text-xs font-bold uppercase tracking-wider text-neutral-400">
+            Últimos lançamentos do mês
+          </span>
+          <button
+            id="link-ver-todos-lancamentos"
+            type="button"
+            onClick={onAcessarPainel}
+            className="flex items-center gap-1 text-xs font-bold text-emerald-400 hover:text-emerald-300 hover:underline transition-colors"
+          >
+            <span>Ver todos</span>
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {ultimosTresLancamentos.length === 0 ? (
+          <p className="text-xs text-neutral-500 py-1">
+            Nenhum gasto lançado neste mês ainda.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {ultimosTresLancamentos.map(item => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between rounded-xl border border-neutral-800/80 bg-neutral-950/80 px-3 py-2 text-xs"
+              >
+                <div className="min-w-0 pr-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-neutral-200 truncate">
+                      {item.categoria}
+                    </span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-300">
+                      {obterRotuloQuem(item.quem, appState.config)}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-neutral-500 font-mono">
+                    {formatarDataCurta(item.data)}
+                    {item.estabelecimento ? ` • ${item.estabelecimento}` : ''}
+                  </span>
+                </div>
+                <span className="font-mono font-bold text-white shrink-0">
+                  {formatarMoeda(item.valor)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Botão SALVAR Fixo Logo Acima da Barra de Navegação Inferior (bottom-16 + safe-area) */}
+      <div
+        id="container-salvar-fixo"
+        className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-0 right-0 z-30 border-t border-neutral-800/80 bg-neutral-950/95 p-3.5 backdrop-blur-md"
+      >
         <div className="mx-auto max-w-md">
           {tipoLancamento === 'colchao' ? (
             <button

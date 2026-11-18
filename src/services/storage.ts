@@ -121,7 +121,14 @@ export async function gravarEmLotes(operacoes: OperacaoBatch[]): Promise<void> {
 export function carregarEstado(): AppState {
   try {
     const rawQuem = localStorage.getItem(DEVICE_PREF_KEYS.ULTIMO_QUEM) as Quem | null;
-    const rawDia = localStorage.getItem(DEVICE_PREF_KEYS.SIMULACAO_DIA);
+    const isDev =
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('dev') === '1';
+
+    if (!isDev) {
+      localStorage.removeItem(DEVICE_PREF_KEYS.SIMULACAO_DIA);
+    }
+    const rawDia = isDev ? localStorage.getItem(DEVICE_PREF_KEYS.SIMULACAO_DIA) : null;
 
     return {
       lancamentos: [],
@@ -719,7 +726,7 @@ export function virarMesCiclo(
   let estado = {
     ...estadoAtual,
     mesAtivo: novoMesRef,
-    diaAtualSimulado: 1
+    diaAtualSimulado: null
   };
 
   if (transferirSobraColchao && valorSobra > 0) {
@@ -735,7 +742,7 @@ export function virarMesCiclo(
     estado = res.estadoAtualizado;
   }
 
-  salvarEstado({ diaAtualSimulado: 1, mesAtivo: novoMesRef });
+  salvarEstado({ diaAtualSimulado: null, mesAtivo: novoMesRef });
   return estado;
 }
 
@@ -1056,10 +1063,8 @@ export function assinarFamiliaTempoReal(
       snap => {
         const lista: TransacaoReserva[] = [];
         snap.forEach(d => lista.push(d.data() as TransacaoReserva));
-        if (lista.length > 0) {
-          lista.sort((a, b) => a.data.localeCompare(b.data));
-          onUpdate({ reserva: lista }, { origemSubcolecao: 'reserva' });
-        }
+        lista.sort((a, b) => a.data.localeCompare(b.data));
+        onUpdate({ reserva: lista }, { origemSubcolecao: 'reserva' });
       },
       err => handleFirestoreError(err, OperationType.LIST, `families/${familyId}/reserva`)
     )

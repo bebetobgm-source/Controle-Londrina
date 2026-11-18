@@ -385,10 +385,20 @@ export default function App() {
   };
 
   const agora = new Date();
-  const diaAtual = appState.diaAtualSimulado || agora.getDate();
+  const diaAtual = isDevMode ? (appState.diaAtualSimulado || agora.getDate()) : agora.getDate();
   const mesAtivo = appState.mesAtivo || `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
   const [anoAtivoNum, mesAtivoNum] = mesAtivo.split('-').map(Number);
   const totalDiasMes = new Date(anoAtivoNum || agora.getFullYear(), mesAtivoNum || (agora.getMonth() + 1), 0).getDate();
+
+  const handleIrParaLancamentosPainel = () => {
+    setAbaAtiva('painel');
+    setTimeout(() => {
+      const el = document.getElementById('card-lancamentos-recentes');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 80);
+  };
 
   const lancamentosMesAtivo = useMemo(() => {
     return filtrarLancamentosDoMes(appState.lancamentos, mesAtivo);
@@ -624,7 +634,11 @@ export default function App() {
       )}
 
       {/* Container Mobile-first (390px - 440px) */}
-      <main className="w-full max-w-md px-4 flex-1 flex flex-col">
+      <main
+        className={`w-full max-w-md px-4 flex-1 flex flex-col ${
+          abaAtiva === 'lancamento' ? 'pb-44' : 'pb-24'
+        }`}
+      >
         {/* Aviso de Navegador Interno do WhatsApp/Instagram */}
         {isInAppBrowser && (
           <div className="mt-2 rounded-xl bg-amber-950/80 border border-amber-600/50 p-3 text-xs text-amber-200 animate-in fade-in">
@@ -807,23 +821,25 @@ export default function App() {
                 </button>
               ) : null}
 
-              {/* Seletor rápido de dia para simular o mês */}
-              <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1">
-                <Calendar className="h-3 w-3 text-neutral-400" />
-                <span className="text-[11px] font-semibold text-neutral-400">Dia</span>
-                <select
-                  id="select-dia-simulado"
-                  value={diaAtual}
-                  onChange={e => handleSimularDia(parseInt(e.target.value, 10))}
-                  className="bg-transparent text-xs font-mono font-bold text-white focus:outline-none cursor-pointer"
-                >
-                  {Array.from({ length: totalDiasMes }, (_, i) => i + 1).map(d => (
-                    <option key={d} value={d} className="bg-neutral-900 text-white">
-                      {d}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* Seletor rápido de dia para simular o mês (apenas no modo dev ?dev=1) */}
+              {isDevMode && (
+                <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1">
+                  <Calendar className="h-3 w-3 text-neutral-400" />
+                  <span className="text-[11px] font-semibold text-neutral-400">Dia</span>
+                  <select
+                    id="select-dia-simulado"
+                    value={diaAtual}
+                    onChange={e => handleSimularDia(parseInt(e.target.value, 10))}
+                    className="bg-transparent text-xs font-mono font-bold text-white focus:outline-none cursor-pointer"
+                  >
+                    {Array.from({ length: totalDiasMes }, (_, i) => i + 1).map(d => (
+                      <option key={d} value={d} className="bg-neutral-900 text-white">
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -862,7 +878,7 @@ export default function App() {
             <LancamentoRapido
               appState={appState}
               setAppState={setAppState}
-              onAcessarPainel={() => setAbaAtiva('painel')}
+              onAcessarPainel={handleIrParaLancamentosPainel}
             />
           )}
 
@@ -911,12 +927,12 @@ export default function App() {
           onSairConta={handleSairConta}
         />
 
-        {/* Barra de Navegação Inferior Fixa (5 Abas, Mobile-First) */}
+        {/* Barra de Navegação Inferior Fixa (64px + safe-area-inset-bottom, sempre visível) */}
         <nav
           id="barra-navegacao-inferior"
-          className="fixed bottom-0 left-0 right-0 z-30 border-t border-neutral-800/90 bg-neutral-950/95 px-2 py-2 backdrop-blur-md"
+          className="fixed bottom-0 left-0 right-0 z-40 border-t border-neutral-800/90 bg-neutral-950/95 px-2 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md"
         >
-          <div className="mx-auto flex max-w-md items-center justify-around">
+          <div className="mx-auto flex h-16 max-w-md items-center justify-around">
             <button
               id="tab-btn-lancar"
               type="button"
