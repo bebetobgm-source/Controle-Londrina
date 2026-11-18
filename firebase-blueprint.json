@@ -87,6 +87,7 @@
       "description": "Recurring monthly fixed bill.",
       "type": "object",
       "properties": {
+        "id": { "type": "string" },
         "descricao": { "type": "string" },
         "valor": { "type": "number" },
         "dia_vencimento": { "type": "number" },
@@ -94,7 +95,7 @@
         "ativo": { "type": "string" },
         "pago_mes_ref": { "type": "string" }
       },
-      "required": ["descricao", "valor", "dia_vencimento", "categoria", "ativo", "pago_mes_ref"]
+      "required": ["id", "descricao", "valor", "dia_vencimento", "categoria", "ativo", "pago_mes_ref"]
     },
     "RendaExtra": {
       "title": "RendaExtra",

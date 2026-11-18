@@ -64,13 +64,19 @@ import {
   renovarTokenGoogle
 } from './services/googleAuth';
 
-type AbaAtiva = 'lancamento' | 'painel' | 'conselheiro' | 'simulador' | 'testes';
+type AbaPadrao = 'lancamento' | 'painel' | 'conselheiro';
+type AbaDev = 'simulador' | 'testes';
+type AbaAtiva = AbaPadrao | AbaDev;
 
 const SESSION_INVITE_KEY = 'orcamento_pending_invite_token_v1';
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>(() => carregarEstadoInicial());
   const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('lancamento');
+  const [isDevMode] = useState<boolean>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('dev') === '1';
+  });
 
   // Autenticação Google e Família no Firestore
   const [authVerificado, setAuthVerificado] = useState<boolean>(false);
@@ -777,7 +783,7 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-1.5">
-              {/* Botão de Status Google Sheets (Opcional) */}
+              {/* Botão de Status Google Sheets (Opcional / Modo Dev) */}
               {obterPlanilhaConectada() ? (
                 <button
                   type="button"
@@ -789,7 +795,7 @@ export default function App() {
                   <RefreshCw className={`h-2.5 w-2.5 text-emerald-400 ${sincronizandoNuvem ? 'animate-spin' : ''}`} />
                   <span>{sincronizandoNuvem ? 'Sync...' : (ultimaSincronizacao ? `Sheets ${ultimaSincronizacao}` : 'Sheets')}</span>
                 </button>
-              ) : (
+              ) : isDevMode ? (
                 <button
                   type="button"
                   onClick={() => setAbaAtiva('testes')}
@@ -799,7 +805,7 @@ export default function App() {
                   <FileSpreadsheet className="h-2.5 w-2.5" />
                   <span>Sheets</span>
                 </button>
-              )}
+              ) : null}
 
               {/* Seletor rápido de dia para simular o mês */}
               <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1">
@@ -876,13 +882,13 @@ export default function App() {
             />
           )}
 
-          {abaAtiva === 'simulador' && (
+          {isDevMode && abaAtiva === 'simulador' && (
             <SimuladorView
               appState={appState}
             />
           )}
 
-          {abaAtiva === 'testes' && (
+          {isDevMode && abaAtiva === 'testes' && (
             <TestesECodigoView
               appState={appState}
               setAppState={setAppState}
@@ -953,33 +959,37 @@ export default function App() {
               <span className="text-[11px]">Conselho</span>
             </button>
 
-            <button
-              id="tab-btn-simular"
-              type="button"
-              onClick={() => setAbaAtiva('simulador')}
-              className={`flex flex-col items-center gap-1 rounded-xl px-3 py-1.5 transition-all active:scale-95 ${
-                abaAtiva === 'simulador'
-                  ? 'text-white font-bold'
-                  : 'text-neutral-400 hover:text-neutral-200'
-              }`}
-            >
-              <Calculator className={`h-5 w-5 ${abaAtiva === 'simulador' ? 'stroke-[2.5]' : 'stroke-2'}`} />
-              <span className="text-[11px]">Simular</span>
-            </button>
+            {isDevMode && (
+              <>
+                <button
+                  id="tab-btn-simular"
+                  type="button"
+                  onClick={() => setAbaAtiva('simulador')}
+                  className={`flex flex-col items-center gap-1 rounded-xl px-3 py-1.5 transition-all active:scale-95 ${
+                    abaAtiva === 'simulador'
+                      ? 'text-white font-bold'
+                      : 'text-neutral-400 hover:text-neutral-200'
+                  }`}
+                >
+                  <Calculator className={`h-5 w-5 ${abaAtiva === 'simulador' ? 'stroke-[2.5]' : 'stroke-2'}`} />
+                  <span className="text-[11px]">Simular</span>
+                </button>
 
-            <button
-              id="tab-btn-testes"
-              type="button"
-              onClick={() => setAbaAtiva('testes')}
-              className={`flex flex-col items-center gap-1 rounded-xl px-3 py-1.5 transition-all active:scale-95 ${
-                abaAtiva === 'testes'
-                  ? 'text-emerald-400 font-bold'
-                  : 'text-neutral-400 hover:text-neutral-200'
-              }`}
-            >
-              <FileSpreadsheet className={`h-5 w-5 ${abaAtiva === 'testes' ? 'stroke-[2.5]' : 'stroke-2'}`} />
-              <span className="text-[11px]">Planilha</span>
-            </button>
+                <button
+                  id="tab-btn-testes"
+                  type="button"
+                  onClick={() => setAbaAtiva('testes')}
+                  className={`flex flex-col items-center gap-1 rounded-xl px-3 py-1.5 transition-all active:scale-95 ${
+                    abaAtiva === 'testes'
+                      ? 'text-emerald-400 font-bold'
+                      : 'text-neutral-400 hover:text-neutral-200'
+                  }`}
+                >
+                  <FileSpreadsheet className={`h-5 w-5 ${abaAtiva === 'testes' ? 'stroke-[2.5]' : 'stroke-2'}`} />
+                  <span className="text-[11px]">Planilha</span>
+                </button>
+              </>
+            )}
           </div>
         </nav>
       </main>

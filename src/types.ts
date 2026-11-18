@@ -34,6 +34,7 @@ export interface RendaExtra {
 }
 
 export interface ContaFixa {
+  id?: string;
   descricao: string;
   valor: number;
   dia_vencimento: number;

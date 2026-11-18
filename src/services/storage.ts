@@ -9,7 +9,8 @@ import {
   onSnapshot,
   writeBatch,
   Timestamp,
-  Unsubscribe
+  Unsubscribe,
+  DocumentReference
 } from 'firebase/firestore';
 import {
   Lancamento,
@@ -68,6 +69,13 @@ export function obterMesAtualPadrao(): string {
   return `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
 }
 
+export function gerarUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `uuid-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+}
+
 export interface AppState {
   lancamentos: Lancamento[];
   rendasExtras: RendaExtra[];
@@ -82,14 +90,30 @@ export interface AppState {
   mesAtivo: string; // AAAA-MM
 }
 
-function fixIdFromDescricao(descricao: string): string {
-  const slug = descricao
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-  return `fixa-${slug || 'conta'}`;
+export type OperacaoBatch = {
+  type?: 'set' | 'delete';
+  ref: DocumentReference;
+  data?: Record<string, any>;
+};
+
+const TAMANHO_LOTE = 400;
+
+/**
+ * Grava ou exclui documentos no Firestore dividindo em lotes de até 400 operações por writeBatch
+ */
+export async function gravarEmLotes(operacoes: OperacaoBatch[]): Promise<void> {
+  for (let i = 0; i < operacoes.length; i += TAMANHO_LOTE) {
+    const fatia = operacoes.slice(i, i + TAMANHO_LOTE);
+    const batch = writeBatch(db);
+    fatia.forEach(op => {
+      if (op.type === 'delete') {
+        batch.delete(op.ref);
+      } else if (op.data !== undefined) {
+        batch.set(op.ref, op.data);
+      }
+    });
+    await batch.commit();
+  }
 }
 
 export function carregarEstado(): AppState {
@@ -100,7 +124,7 @@ export function carregarEstado(): AppState {
     return {
       lancamentos: [],
       rendasExtras: [],
-      fixas: [...FIXAS_PADRAO],
+      fixas: FIXAS_PADRAO.map(f => ({ ...f, id: f.id || gerarUuid() })),
       orcamento: [...ORCAMENTO_PADRAO],
       categorias: [...CATEGORIAS_PADRAO],
       reserva: [...RESERVA_INICIAL],
@@ -123,7 +147,7 @@ export function carregarEstado(): AppState {
     return {
       lancamentos: [],
       rendasExtras: [],
-      fixas: [...FIXAS_PADRAO],
+      fixas: FIXAS_PADRAO.map(f => ({ ...f, id: f.id || gerarUuid() })),
       orcamento: [...ORCAMENTO_PADRAO],
       categorias: [...CATEGORIAS_PADRAO],
       reserva: [...RESERVA_INICIAL],
@@ -296,14 +320,15 @@ export function alternarStatusContaFixa(descricao: string, estadoAtual: AppState
   const novasFixas = estadoAtual.fixas.map(f => {
     if (f.descricao === descricao) {
       const novoPago = f.pago_mes_ref === mesRefAtual ? '' : mesRefAtual;
-      contaModificada = { ...f, pago_mes_ref: novoPago };
+      const id = f.id || gerarUuid();
+      contaModificada = { ...f, id, pago_mes_ref: novoPago };
       return contaModificada;
     }
     return f;
   });
 
   if (activeFamilyId && contaModificada) {
-    const fixId = fixIdFromDescricao(descricao);
+    const fixId = (contaModificada as ContaFixa).id!;
     const fixPath = `families/${activeFamilyId}/fixas/${fixId}`;
     setDoc(doc(db, 'families', activeFamilyId, 'fixas', fixId), contaModificada).catch(err =>
       handleFirestoreError(err, OperationType.WRITE, fixPath)
@@ -321,22 +346,17 @@ export function atualizarContaFixa(
   let contaFinal: ContaFixa | null = null;
   const novasFixas = estadoAtual.fixas.map(f => {
     if (f.descricao === descricaoOriginal) {
-      contaFinal = { ...f, ...dadosAtualizados };
+      const id = f.id || gerarUuid();
+      contaFinal = { ...f, ...dadosAtualizados, id };
       return contaFinal;
     }
     return f;
   });
 
   if (activeFamilyId && contaFinal) {
-    const oldId = fixIdFromDescricao(descricaoOriginal);
-    const newId = fixIdFromDescricao((contaFinal as ContaFixa).descricao);
-    if (oldId !== newId) {
-      deleteDoc(doc(db, 'families', activeFamilyId, 'fixas', oldId)).catch(err =>
-        handleFirestoreError(err, OperationType.DELETE, `families/${activeFamilyId}/fixas/${oldId}`)
-      );
-    }
-    setDoc(doc(db, 'families', activeFamilyId, 'fixas', newId), contaFinal).catch(err =>
-      handleFirestoreError(err, OperationType.WRITE, `families/${activeFamilyId}/fixas/${newId}`)
+    const fixId = (contaFinal as ContaFixa).id!;
+    setDoc(doc(db, 'families', activeFamilyId, 'fixas', fixId), contaFinal).catch(err =>
+      handleFirestoreError(err, OperationType.WRITE, `families/${activeFamilyId}/fixas/${fixId}`)
     );
   }
 
@@ -347,13 +367,20 @@ export function adicionarContaFixa(
   novaConta: ContaFixa,
   estadoAtual: AppState
 ): AppState {
-  const filtradas = estadoAtual.fixas.filter(f => f.descricao.toLowerCase() !== novaConta.descricao.toLowerCase());
-  const novasFixas = [...filtradas, novaConta];
+  const existente = estadoAtual.fixas.find(
+    f => f.descricao.toLowerCase() === novaConta.descricao.toLowerCase()
+  );
+  const id = existente?.id || novaConta.id || gerarUuid();
+  const contaComId: ContaFixa = { ...novaConta, id };
+
+  const filtradas = estadoAtual.fixas.filter(
+    f => f.descricao.toLowerCase() !== novaConta.descricao.toLowerCase()
+  );
+  const novasFixas = [...filtradas, contaComId];
 
   if (activeFamilyId) {
-    const fixId = fixIdFromDescricao(novaConta.descricao);
-    setDoc(doc(db, 'families', activeFamilyId, 'fixas', fixId), novaConta).catch(err =>
-      handleFirestoreError(err, OperationType.WRITE, `families/${activeFamilyId}/fixas/${fixId}`)
+    setDoc(doc(db, 'families', activeFamilyId, 'fixas', id), contaComId).catch(err =>
+      handleFirestoreError(err, OperationType.WRITE, `families/${activeFamilyId}/fixas/${id}`)
     );
   }
 
@@ -364,12 +391,12 @@ export function excluirContaFixa(
   descricao: string,
   estadoAtual: AppState
 ): AppState {
+  const alvo = estadoAtual.fixas.find(f => f.descricao === descricao);
   const novasFixas = estadoAtual.fixas.filter(f => f.descricao !== descricao);
 
-  if (activeFamilyId) {
-    const fixId = fixIdFromDescricao(descricao);
-    deleteDoc(doc(db, 'families', activeFamilyId, 'fixas', fixId)).catch(err =>
-      handleFirestoreError(err, OperationType.DELETE, `families/${activeFamilyId}/fixas/${fixId}`)
+  if (activeFamilyId && alvo?.id) {
+    deleteDoc(doc(db, 'families', activeFamilyId, 'fixas', alvo.id)).catch(err =>
+      handleFirestoreError(err, OperationType.DELETE, `families/${activeFamilyId}/fixas/${alvo.id}`)
     );
   }
 
@@ -564,11 +591,14 @@ export function ajustarSaldoColchao(
   return { estadoAtualizado, transacaoAjuste };
 }
 
+/**
+ * Reseta apenas o estado em memória (para modo de testes/dev), NUNCA grava no Firestore
+ */
 export function resetarParaDadosPadrao(): AppState {
-  const estado: AppState = {
+  return {
     lancamentos: [...LANCAMENTOS_INICIAIS],
     rendasExtras: [],
-    fixas: [...FIXAS_PADRAO],
+    fixas: FIXAS_PADRAO.map(f => ({ ...f, id: f.id || gerarUuid() })),
     orcamento: [...ORCAMENTO_PADRAO],
     categorias: [...CATEGORIAS_PADRAO],
     reserva: [...RESERVA_INICIAL],
@@ -578,13 +608,6 @@ export function resetarParaDadosPadrao(): AppState {
     diaAtualSimulado: null,
     mesAtivo: obterMesAtualPadrao()
   };
-
-  if (activeFamilyId) {
-    sincronizarEstadoCompletoParaFirestore(activeFamilyId, estado).catch(err =>
-      console.error('Erro ao resetar dados no Firestore:', err)
-    );
-  }
-  return estado;
 }
 
 // -------------------------------------------------------------
@@ -771,6 +794,7 @@ export function aplicarOnboardingNovoCasal(
     config: novaConfig,
     orcamento: novoOrcamento,
     reserva: novaReserva,
+    fixas: estadoAtual.fixas.map(f => ({ ...f, id: f.id || gerarUuid() })),
     lancamentos: dados.limparExemplos ? [] : estadoAtual.lancamentos,
     rendasExtras: dados.limparExemplos ? [] : estadoAtual.rendasExtras,
     mesAtivo: obterMesAtualPadrao(),
@@ -834,22 +858,35 @@ export async function criarFamiliaNoFirestore(
       { merge: true }
     );
 
-    // 3. Gravar subcoleções iniciais em lote (fixas, reserva, lancamentos iniciais se houver)
-    const batch = writeBatch(db);
+    // 3. Gravar subcoleções iniciais em lotes de no máximo 400 operações cada
+    const operacoes: OperacaoBatch[] = [];
     estadoInicial.fixas.forEach(f => {
-      const fId = fixIdFromDescricao(f.descricao);
-      batch.set(doc(db, 'families', familyId, 'fixas', fId), f);
+      const fId = f.id || gerarUuid();
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'fixas', fId),
+        data: { ...f, id: fId }
+      });
     });
     estadoInicial.reserva.forEach(r => {
-      batch.set(doc(db, 'families', familyId, 'reserva', r.id), r);
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'reserva', r.id),
+        data: r
+      });
     });
     estadoInicial.lancamentos.forEach(l => {
-      batch.set(doc(db, 'families', familyId, 'lancamentos', l.id), l);
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'lancamentos', l.id),
+        data: l
+      });
     });
     estadoInicial.rendasExtras.forEach(re => {
-      batch.set(doc(db, 'families', familyId, 'rendasExtras', re.id), re);
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'rendasExtras', re.id),
+        data: re
+      });
     });
-    await batch.commit();
+
+    await gravarEmLotes(operacoes);
 
     definirFamilyIdAtivo(familyId);
     return familyId;
@@ -872,20 +909,34 @@ export async function sincronizarEstadoCompletoParaFirestore(
       mesAtivo: estado.mesAtivo
     });
 
-    const batch = writeBatch(db);
+    const operacoes: OperacaoBatch[] = [];
     estado.fixas.forEach(f => {
-      batch.set(doc(db, 'families', familyId, 'fixas', fixIdFromDescricao(f.descricao)), f);
+      const fId = f.id || gerarUuid();
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'fixas', fId),
+        data: { ...f, id: fId }
+      });
     });
     estado.reserva.forEach(r => {
-      batch.set(doc(db, 'families', familyId, 'reserva', r.id), r);
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'reserva', r.id),
+        data: r
+      });
     });
     estado.lancamentos.forEach(l => {
-      batch.set(doc(db, 'families', familyId, 'lancamentos', l.id), l);
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'lancamentos', l.id),
+        data: l
+      });
     });
     estado.rendasExtras.forEach(r => {
-      batch.set(doc(db, 'families', familyId, 'rendasExtras', r.id), r);
+      operacoes.push({
+        ref: doc(db, 'families', familyId, 'rendasExtras', r.id),
+        data: r
+      });
     });
-    await batch.commit();
+
+    await gravarEmLotes(operacoes);
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `families/${familyId}`);
   }
@@ -943,13 +994,46 @@ export function assinarFamiliaTempoReal(
     )
   );
 
-  // 3. Subcoleção fixas
+  // 3. Subcoleção fixas (com migração automática de contas antigas sem id / com slug)
+  let migrandoFixasAntigas = false;
   unsubs.push(
     onSnapshot(
       collection(db, 'families', familyId, 'fixas'),
       snap => {
         const lista: ContaFixa[] = [];
-        snap.forEach(d => lista.push(d.data() as ContaFixa));
+        const operacoesMigracaoFixas: OperacaoBatch[] = [];
+
+        snap.forEach(d => {
+          const dados = d.data() as ContaFixa;
+          // Se a conta antiga não possui campo id ou o id do doc era um slug antigo
+          if (!dados.id) {
+            const novoId = gerarUuid();
+            const contaComNovoId: ContaFixa = { ...dados, id: novoId };
+            lista.push(contaComNovoId);
+
+            operacoesMigracaoFixas.push({
+              type: 'set',
+              ref: doc(db, 'families', familyId, 'fixas', novoId),
+              data: contaComNovoId
+            });
+            operacoesMigracaoFixas.push({
+              type: 'delete',
+              ref: doc(db, 'families', familyId, 'fixas', d.id)
+            });
+          } else {
+            lista.push(dados);
+          }
+        });
+
+        if (operacoesMigracaoFixas.length > 0 && !migrandoFixasAntigas) {
+          migrandoFixasAntigas = true;
+          gravarEmLotes(operacoesMigracaoFixas)
+            .catch(err => handleFirestoreError(err, OperationType.WRITE, `families/${familyId}/fixas`))
+            .finally(() => {
+              migrandoFixasAntigas = false;
+            });
+        }
+
         if (lista.length > 0) {
           lista.sort((a, b) => a.dia_vencimento - b.dia_vencimento);
           onUpdate({ fixas: lista }, { origemSubcolecao: 'fixas' });
@@ -1136,7 +1220,6 @@ export async function aceitarConviteFamiliaFirestore(token: string): Promise<{
   const { familyId, createdBy, nomeFamilia } = consulta.convite;
 
   if (createdBy === user.uid) {
-    // O próprio criador clicou no link
     definirFamilyIdAtivo(familyId);
     return {
       sucesso: true,
@@ -1146,10 +1229,6 @@ export async function aceitarConviteFamiliaFirestore(token: string): Promise<{
   }
 
   try {
-    // Operação atômica com writeBatch respeitando as regras estritas do firestore.rules:
-    // 1. families/{familyId}: members = [createdBy, user.uid], conviteUsado = token
-    // 2. invites/{token}: used = true, usedBy = user.uid
-    // 3. users/{user.uid}: { familyId, nome, criadoEm }
     const batch = writeBatch(db);
 
     batch.update(doc(db, 'families', familyId), {
@@ -1210,7 +1289,6 @@ export function temDadosAntigosNoLocalStorage(): boolean {
 export function limparChavesAntigasLocalStorage(): void {
   try {
     Object.values(LEGACY_STORAGE_KEYS).forEach(key => localStorage.removeItem(key));
-    // Também limpa eventuais snapshots antigos com prefixo orcamento_saas_casal_v1_
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
@@ -1253,15 +1331,8 @@ export async function migrarDadosLocalStorageParaFirestore(familyId: string): Pr
   const config: Partial<Configuracao> | null = rawConfig ? JSON.parse(rawConfig) : null;
   const alertas: AlertaLog[] = rawAlertas ? JSON.parse(rawAlertas) : [];
 
-  type OperacaoBatch = {
-    ref: ReturnType<typeof doc>;
-    data: Record<string, any>;
-    merge?: boolean;
-  };
-
   const operacoes: OperacaoBatch[] = [];
 
-  // Atualizar documento da família se houver config/orcamento/categorias/mesAtivo
   const updateFamilia: Record<string, any> = {};
   if (config) {
     updateFamilia.config = {
@@ -1297,10 +1368,10 @@ export async function migrarDadosLocalStorageParaFirestore(familyId: string): Pr
   });
 
   fixas.forEach(f => {
-    const id = fixIdFromDescricao(f.descricao);
+    const id = f.id || gerarUuid();
     operacoes.push({
       ref: doc(db, 'families', familyId, 'fixas', id),
-      data: f
+      data: { ...f, id }
     });
   });
 
@@ -1320,16 +1391,7 @@ export async function migrarDadosLocalStorageParaFirestore(familyId: string): Pr
     });
   });
 
-  // Enviar em lotes de até 400 operações por writeBatch
-  const TAMANHO_LOTE = 400;
-  for (let i = 0; i < operacoes.length; i += TAMANHO_LOTE) {
-    const fatia = operacoes.slice(i, i + TAMANHO_LOTE);
-    const batch = writeBatch(db);
-    fatia.forEach(op => {
-      batch.set(op.ref, op.data);
-    });
-    await batch.commit();
-  }
+  await gravarEmLotes(operacoes);
 
   // Apagar as chaves antigas do localStorage após concluir a importação
   limparChavesAntigasLocalStorage();
@@ -1337,7 +1399,7 @@ export async function migrarDadosLocalStorageParaFirestore(familyId: string): Pr
 }
 
 // -------------------------------------------------------------
-// CENÁRIOS DE TESTE PREPARADOS PARA OS CRITÉRIOS DE ACEITAÇÃO
+// CENÁRIOS DE TESTE EM MEMÓRIA (NUNCA GRAVAM NO FIRESTORE)
 // -------------------------------------------------------------
 
 export function aplicarCenarioDia15(estadoAtual: AppState): AppState {
@@ -1418,11 +1480,6 @@ export function aplicarCenarioDia15(estadoAtual: AppState): AppState {
   );
 
   estadoComDia15.alertasLog = alertas;
-  salvarEstado({ diaAtualSimulado: 15 });
-
-  if (activeFamilyId) {
-    sincronizarEstadoCompletoParaFirestore(activeFamilyId, estadoComDia15);
-  }
   return estadoComDia15;
 }
 
@@ -1430,7 +1487,8 @@ export function aplicarCenarioHigiene91(estadoAtual: AppState): { estadoAtualiza
   const agora = new Date();
   const mesRef = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
 
-  const novo: Omit<Lancamento, 'id' | 'mes_ref' | 'criado_em'> = {
+  const lancamentoSimulado: Lancamento = {
+    id: `test-hig-${Date.now()}`,
     data: `${mesRef}-10`,
     valor: 91.88,
     categoria: 'Mercado',
@@ -1439,11 +1497,33 @@ export function aplicarCenarioHigiene91(estadoAtual: AppState): { estadoAtualiza
     forma_pagamento: 'Débito',
     quem: 'Ela',
     essencial: 'S',
-    observacao: 'Fraldas e produtos de higiene'
+    observacao: 'Fraldas e produtos de higiene',
+    mes_ref: mesRef,
+    criado_em: agora.toISOString()
   };
 
-  const res = registrarLancamento(novo, estadoAtual);
-  return { estadoAtualizado: res.estadoAtualizado, alertas: res.alertasDisparados };
+  const novosLancamentos = [lancamentoSimulado, ...estadoAtual.lancamentos];
+  const diaAvaliacao = estadoAtual.diaAtualSimulado || agora.getDate();
+  const alertas = avaliarAlertas(
+    novosLancamentos,
+    estadoAtual.orcamento,
+    estadoAtual.fixas,
+    estadoAtual.config,
+    estadoAtual.reserva,
+    diaAvaliacao,
+    undefined,
+    lancamentoSimulado,
+    estadoAtual.rendasExtras
+  );
+
+  const estadoAtualizado: AppState = {
+    ...estadoAtual,
+    lancamentos: novosLancamentos,
+    alertasLog: [...alertas, ...estadoAtual.alertasLog],
+    ultimoQuem: 'Ela'
+  };
+
+  return { estadoAtualizado, alertas };
 }
 
 export function aplicarCenarioVoltinhasMercado(estadoAtual: AppState): AppState {
@@ -1536,8 +1616,5 @@ export function aplicarCenarioVoltinhasMercado(estadoAtual: AppState): AppState 
   );
 
   novoEstado.alertasLog = alertas;
-  if (activeFamilyId) {
-    sincronizarEstadoCompletoParaFirestore(activeFamilyId, novoEstado);
-  }
   return novoEstado;
 }
