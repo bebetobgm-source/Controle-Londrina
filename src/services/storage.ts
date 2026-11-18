@@ -91,7 +91,7 @@ export interface AppState {
 }
 
 export type OperacaoBatch = {
-  type?: 'set' | 'delete';
+  type?: 'set' | 'update' | 'delete';
   ref: DocumentReference;
   data?: Record<string, any>;
 };
@@ -99,7 +99,7 @@ export type OperacaoBatch = {
 const TAMANHO_LOTE = 400;
 
 /**
- * Grava ou exclui documentos no Firestore dividindo em lotes de até 400 operações por writeBatch
+ * Grava, atualiza ou exclui documentos no Firestore dividindo em lotes de até 400 operações por writeBatch
  */
 export async function gravarEmLotes(operacoes: OperacaoBatch[]): Promise<void> {
   for (let i = 0; i < operacoes.length; i += TAMANHO_LOTE) {
@@ -108,6 +108,8 @@ export async function gravarEmLotes(operacoes: OperacaoBatch[]): Promise<void> {
     fatia.forEach(op => {
       if (op.type === 'delete') {
         batch.delete(op.ref);
+      } else if (op.type === 'update' && op.data !== undefined) {
+        batch.update(op.ref, op.data);
       } else if (op.data !== undefined) {
         batch.set(op.ref, op.data);
       }
@@ -994,7 +996,7 @@ export function assinarFamiliaTempoReal(
     )
   );
 
-  // 3. Subcoleção fixas (com migração automática de contas antigas sem id / com slug)
+  // 3. Subcoleção fixas (com migração idempotente de contas antigas sem campo id)
   let migrandoFixasAntigas = false;
   unsubs.push(
     onSnapshot(
@@ -1005,20 +1007,12 @@ export function assinarFamiliaTempoReal(
 
         snap.forEach(d => {
           const dados = d.data() as ContaFixa;
-          // Se a conta antiga não possui campo id ou o id do doc era um slug antigo
           if (!dados.id) {
-            const novoId = gerarUuid();
-            const contaComNovoId: ContaFixa = { ...dados, id: novoId };
-            lista.push(contaComNovoId);
-
+            lista.push({ ...dados, id: d.id });
             operacoesMigracaoFixas.push({
-              type: 'set',
-              ref: doc(db, 'families', familyId, 'fixas', novoId),
-              data: contaComNovoId
-            });
-            operacoesMigracaoFixas.push({
-              type: 'delete',
-              ref: doc(db, 'families', familyId, 'fixas', d.id)
+              type: 'update',
+              ref: doc(db, 'families', familyId, 'fixas', d.id),
+              data: { id: d.id }
             });
           } else {
             lista.push(dados);
@@ -1028,16 +1022,14 @@ export function assinarFamiliaTempoReal(
         if (operacoesMigracaoFixas.length > 0 && !migrandoFixasAntigas) {
           migrandoFixasAntigas = true;
           gravarEmLotes(operacoesMigracaoFixas)
-            .catch(err => handleFirestoreError(err, OperationType.WRITE, `families/${familyId}/fixas`))
+            .catch(err => handleFirestoreError(err, OperationType.UPDATE, `families/${familyId}/fixas`))
             .finally(() => {
               migrandoFixasAntigas = false;
             });
         }
 
-        if (lista.length > 0) {
-          lista.sort((a, b) => a.dia_vencimento - b.dia_vencimento);
-          onUpdate({ fixas: lista }, { origemSubcolecao: 'fixas' });
-        }
+        lista.sort((a, b) => a.dia_vencimento - b.dia_vencimento);
+        onUpdate({ fixas: lista }, { origemSubcolecao: 'fixas' });
       },
       err => handleFirestoreError(err, OperationType.LIST, `families/${familyId}/fixas`)
     )
