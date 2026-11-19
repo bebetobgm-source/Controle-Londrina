@@ -839,9 +839,15 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => handleAbrirConfigSaaS('casal')}
-                  className="text-base font-extrabold tracking-tight text-white hover:text-emerald-400 transition-colors flex items-center gap-1.5 truncate"
+                  className="text-base font-extrabold tracking-tight text-white hover:text-emerald-400 transition-colors flex items-center gap-2 truncate"
                   title="Personalizar nomes do casal e convite"
                 >
+                  <img
+                    src="/icon-192.png"
+                    alt="Casal no Azul"
+                    referrerPolicy="no-referrer"
+                    className="h-6 w-6 rounded-md shrink-0"
+                  />
                   <span className="truncate">{appState.config.nome_familia || 'Casal no Azul'}</span>
                 </button>
 

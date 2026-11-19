@@ -2,6 +2,8 @@ import React from 'react';
 import { ArrowLeft } from 'lucide-react';
 
 export const EMAIL_CONTATO_LEGAL = 'bebeto.bgm@gmail.com';
+export const CONTROLADOR_NOME = 'Humberto Vinicius de Lima Vieira Santos';
+export const CONTROLADOR_DOCUMENTO = 'SEU_CPF_OU_CNPJ';
 const ULTIMA_ATUALIZACAO = '2026';
 
 interface Props {
@@ -27,9 +29,15 @@ export const PaginasLegais: React.FC<Props> = ({
               e.preventDefault();
               onVoltar();
             }}
-            className="text-base font-bold tracking-tight text-white whitespace-nowrap shrink-0"
+            className="inline-flex items-center gap-2.5 text-base font-bold tracking-tight text-white whitespace-nowrap shrink-0"
           >
-            Casal no Azul
+            <img
+              src="/icon-192.png"
+              alt="Logo Casal no Azul"
+              referrerPolicy="no-referrer"
+              className="h-7 w-7 rounded-lg shrink-0"
+            />
+            <span>Casal no Azul</span>
           </a>
 
           <button
@@ -88,6 +96,9 @@ export const PaginasLegais: React.FC<Props> = ({
               <p>
                 Uma única assinatura cobre os dois celulares vinculados à mesma família. Os pagamentos são processados de forma segura pela plataforma Kiwify. O aplicativo nunca solicita nem armazena senhas bancárias ou dados de cartão de crédito.
               </p>
+              <p>
+                Na contratação, você tem direito de arrependimento em até 7 (sete) dias, com reembolso integral solicitado pela Kiwify, conforme o art. 49 do Código de Defesa do Consumidor.
+              </p>
             </section>
 
             <section className="space-y-3">
@@ -125,6 +136,9 @@ export const PaginasLegais: React.FC<Props> = ({
           <article className="space-y-8 text-sm sm:text-[15px] text-neutral-300 leading-relaxed">
             <section className="space-y-3">
               <h2 className="text-lg font-semibold text-white">1. Controlador e compromisso com a LGPD</h2>
+              <p>
+                O controlador dos dados é <strong>{CONTROLADOR_NOME}</strong>, inscrito sob o nº <strong>{CONTROLADOR_DOCUMENTO}</strong>, responsável pelo Casal no Azul.
+              </p>
               <p>
                 O <strong>Casal no Azul</strong> trata os dados pessoais dos usuários em conformidade com a Lei Geral de Proteção de Dados Pessoais (Lei nº 13.709/2018 — LGPD). Para qualquer assunto relacionado à privacidade ou ao exercício dos seus direitos como titular, entre em contato pelo e-mail{' '}
                 <a

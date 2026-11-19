@@ -240,12 +240,18 @@ export const LandingPageSaaS: React.FC<Props> = ({
       {/* Barra Superior — Contrato de 3 zonas limpas */}
       <header className="sticky top-0 z-40 border-b border-neutral-900 bg-[#0A0A0A]/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-8 px-5 py-4">
-          {/* Zona 1: Wordmark limpa */}
+          {/* Zona 1: Wordmark limpa com logo */}
           <a
             href="#topo"
-            className="text-base font-extrabold tracking-tight text-white whitespace-nowrap shrink-0"
+            className="inline-flex items-center gap-2.5 text-base font-extrabold tracking-tight text-white whitespace-nowrap shrink-0"
           >
-            Casal no Azul
+            <img
+              src="/icon-192.png"
+              alt="Logo Casal no Azul"
+              referrerPolicy="no-referrer"
+              className="h-7 w-7 rounded-lg shrink-0"
+            />
+            <span>Casal no Azul</span>
           </a>
 
           {/* Zona 2: Links de navegação concisos em linha única */}
