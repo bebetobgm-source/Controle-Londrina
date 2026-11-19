@@ -168,7 +168,9 @@ export const SimuladorView: React.FC<Props> = ({ appState }) => {
               <p className="mt-1 text-xs leading-relaxed opacity-90">
                 {resultado.reservaSobrevive
                   ? `Mesmo com esta compra, a sobra projetada (${formatarMoeda(resultado.projecaoDepois.sobraAjustada)}) é suficiente para o aporte de ${formatarMoeda(appState.config.meta_reserva_mensal)} na reserva.`
-                  : `Com esta compra, o mês fechará com déficit ou sobra de apenas ${formatarMoeda(Math.max(0, resultado.projecaoDepois.sobraAjustada))}, consumindo parte da meta de reserva de ${formatarMoeda(appState.config.meta_reserva_mensal)}.`}
+                  : resultado.projecaoDepois.sobraAjustada < 0
+                    ? `Com esta compra, o mês fechará com déficit de ${formatarMoeda(Math.abs(resultado.projecaoDepois.sobraAjustada))}, e a meta de reserva de ${formatarMoeda(appState.config.meta_reserva_mensal)} não será cumprida.`
+                    : `Com esta compra, sobrarão apenas ${formatarMoeda(resultado.projecaoDepois.sobraAjustada)} no fim do mês, abaixo da meta de reserva de ${formatarMoeda(appState.config.meta_reserva_mensal)}.`}
               </p>
             </div>
           </div>

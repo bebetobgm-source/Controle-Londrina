@@ -137,18 +137,18 @@ export const RESERVA_INICIAL: TransacaoReserva[] = [
 
 // Estabelecimentos comuns para autocomplete rápido
 export const ESTABELECIMENTOS_SUGERIDOS = [
-  'Arnaldo Lanches',
-  'Muffato Duque',
-  'Musamar Centro',
-  'Viscardi',
-  'Angeloni',
-  'Posto Ipiranga Higienópolis',
-  'Posto Shell Tiradentes',
-  'Droga Raia Ayrton Senna',
-  'Nissei Maringá',
-  'Panificadora Londrina',
-  'Feira do Produtor',
-  'Açougue Boi de Ouro'
+  'Supermercado',
+  'Padaria',
+  'Posto de Combustível',
+  'Farmácia',
+  'Feira',
+  'Açougue',
+  'Hortifrúti',
+  'Restaurante',
+  'Pizzaria',
+  'Lanchonete',
+  'Cafeteria',
+  'Mercado do Bairro'
 ];
 
 // Dados iniciais representativos para o casal

@@ -58,8 +58,25 @@ const DEVICE_PREF_KEYS = {
 
 // ID da família ativa na sessão do Firestore
 let activeFamilyId: string | null = null;
+// Modo vitrine (?vitrine=1): tudo fica apenas em memória, sem ler/gravar Firestore ou localStorage
+let modoVitrineAtivo = false;
+
+export function definirModoVitrine(ativo: boolean) {
+  modoVitrineAtivo = ativo;
+  if (ativo) {
+    activeFamilyId = null;
+  }
+}
+
+export function estaEmModoVitrine(): boolean {
+  return modoVitrineAtivo;
+}
 
 export function definirFamilyIdAtivo(familyId: string | null) {
+  if (modoVitrineAtivo) {
+    activeFamilyId = null;
+    return;
+  }
   activeFamilyId = familyId;
 }
 
@@ -105,6 +122,7 @@ const TAMANHO_LOTE = 400;
  * Grava, atualiza ou exclui documentos no Firestore dividindo em lotes de até 400 operações por writeBatch
  */
 export async function gravarEmLotes(operacoes: OperacaoBatch[]): Promise<void> {
+  if (modoVitrineAtivo) return;
   for (let i = 0; i < operacoes.length; i += TAMANHO_LOTE) {
     const fatia = operacoes.slice(i, i + TAMANHO_LOTE);
     const batch = writeBatch(db);
@@ -173,10 +191,223 @@ export function carregarEstado(): AppState {
 export const carregarEstadoInicial = carregarEstado;
 
 /**
+ * Cria o estado fictício em memória para o modo vitrine (?vitrine=1)
+ * Casal Ana & Pedro, renda R$ 7.200, contas fixas, tetos e ~10 lançamentos em ritmo VERDE.
+ */
+export function criarEstadoVitrine(): AppState {
+  const agora = new Date();
+  const ano = agora.getFullYear();
+  const mes = agora.getMonth() + 1;
+  const hoje = agora.getDate();
+  const totalDiasMes = new Date(ano, mes, 0).getDate();
+  const mesAtual = `${ano}-${String(mes).padStart(2, '0')}`;
+  const mesAnterior = navegarMes(mesAtual, -1);
+
+  const formatarData = (dia: number) =>
+    `${mesAtual}-${String(Math.max(1, Math.min(totalDiasMes, dia))).padStart(2, '0')}`;
+
+  // Escala proporcional ao avanço do mês para manter o semáforo SEMPRE VERDE (~79% do ritmo)
+  const escala = Math.max(0.08, Math.min(1, hoje / totalDiasMes));
+
+  const baseLancamentos: Array<{
+    categoria: string;
+    subcategoria: string;
+    estabelecimento: string;
+    forma_pagamento: Lancamento['forma_pagamento'];
+    quem: Quem;
+    essencial: 'S' | 'N';
+    valorBase: number;
+  }> = [
+    {
+      categoria: 'Mercado',
+      subcategoria: 'Alimentos',
+      estabelecimento: 'Supermercado',
+      forma_pagamento: 'Débito',
+      quem: 'Conjunto',
+      essencial: 'S',
+      valorBase: 580
+    },
+    {
+      categoria: 'Combustível',
+      subcategoria: 'Gasolina',
+      estabelecimento: 'Posto',
+      forma_pagamento: 'Crédito',
+      quem: 'Ela',
+      essencial: 'S',
+      valorBase: 180
+    },
+    {
+      categoria: 'Mercado',
+      subcategoria: 'Padaria',
+      estabelecimento: 'Padaria',
+      forma_pagamento: 'Pix',
+      quem: 'Ele',
+      essencial: 'S',
+      valorBase: 85
+    },
+    {
+      categoria: 'Farmácia e Saúde',
+      subcategoria: 'Medicamentos',
+      estabelecimento: 'Farmácia',
+      forma_pagamento: 'Débito',
+      quem: 'Ele',
+      essencial: 'S',
+      valorBase: 150
+    },
+    {
+      categoria: 'Mercado',
+      subcategoria: 'Alimentos',
+      estabelecimento: 'Supermercado',
+      forma_pagamento: 'Débito',
+      quem: 'Ele',
+      essencial: 'S',
+      valorBase: 320
+    },
+    {
+      categoria: 'Alimentação Fora',
+      subcategoria: 'Restaurante e Almoço',
+      estabelecimento: 'Pizzaria',
+      forma_pagamento: 'Crédito',
+      quem: 'Conjunto',
+      essencial: 'N',
+      valorBase: 190
+    },
+    {
+      categoria: 'Combustível',
+      subcategoria: 'Gasolina',
+      estabelecimento: 'Posto',
+      forma_pagamento: 'Débito',
+      quem: 'Ele',
+      essencial: 'S',
+      valorBase: 140
+    },
+    {
+      categoria: 'Lazer',
+      subcategoria: 'Passeio e Cinema',
+      estabelecimento: 'Pizzaria',
+      forma_pagamento: 'Crédito',
+      quem: 'Conjunto',
+      essencial: 'N',
+      valorBase: 180
+    },
+    {
+      categoria: 'Alimentação Fora',
+      subcategoria: 'Café e Padaria',
+      estabelecimento: 'Padaria',
+      forma_pagamento: 'Pix',
+      quem: 'Ela',
+      essencial: 'N',
+      valorBase: 90
+    },
+    {
+      categoria: 'Mercado',
+      subcategoria: 'Hortifrúti Semanal',
+      estabelecimento: 'Supermercado',
+      forma_pagamento: 'Pix',
+      quem: 'Ela',
+      essencial: 'S',
+      valorBase: 145
+    }
+  ];
+
+  const lancamentos: Lancamento[] = baseLancamentos
+    .map((item, idx) => {
+      const diaItem = Math.max(1, Math.min(hoje, Math.round(1 + (idx / (baseLancamentos.length - 1)) * (hoje - 1))));
+      const dataStr = formatarData(diaItem);
+      const valorCalculado = Math.max(8, Math.round(item.valorBase * escala));
+      return {
+        id: `vit-${idx + 1}`,
+        data: dataStr,
+        valor: valorCalculado,
+        categoria: item.categoria,
+        subcategoria: item.subcategoria,
+        estabelecimento: item.estabelecimento,
+        forma_pagamento: item.forma_pagamento,
+        quem: item.quem,
+        essencial: item.essencial,
+        observacao: '',
+        mes_ref: mesAtual,
+        criado_em: `${dataStr}T${String(9 + idx).padStart(2, '0')}:15:00Z`
+      };
+    })
+    .reverse();
+
+  const fixas: ContaFixa[] = [
+    { id: 'vit-fixa-1', descricao: 'Aluguel', valor: 1900, dia_vencimento: 5, categoria: 'Casa e Manutenção', ativo: 'S', pago_mes_ref: mesAtual },
+    { id: 'vit-fixa-2', descricao: 'Condomínio', valor: 450, dia_vencimento: 5, categoria: 'Casa e Manutenção', ativo: 'S', pago_mes_ref: mesAtual },
+    { id: 'vit-fixa-3', descricao: 'Luz', valor: 180, dia_vencimento: 10, categoria: 'Casa e Manutenção', ativo: 'S', pago_mes_ref: mesAtual },
+    { id: 'vit-fixa-4', descricao: 'Internet', valor: 110, dia_vencimento: 10, categoria: 'Casa e Manutenção', ativo: 'S', pago_mes_ref: mesAtual },
+    { id: 'vit-fixa-5', descricao: 'Plano de saúde', valor: 620, dia_vencimento: 15, categoria: 'Farmácia e Saúde', ativo: 'S', pago_mes_ref: '' },
+    { id: 'vit-fixa-6', descricao: 'Financiamento do carro', valor: 980, dia_vencimento: 20, categoria: 'Outros', ativo: 'S', pago_mes_ref: '' }
+  ];
+
+  const orcamento: OrcamentoItem[] = [
+    { mes_ref: mesAtual, categoria: 'Mercado', teto: 1400, tipo: 'Variável' },
+    { mes_ref: mesAtual, categoria: 'Combustível', teto: 400, tipo: 'Variável' },
+    { mes_ref: mesAtual, categoria: 'Alimentação Fora', teto: 350, tipo: 'Variável' },
+    { mes_ref: mesAtual, categoria: 'Lazer', teto: 250, tipo: 'Variável' },
+    { mes_ref: mesAtual, categoria: 'Farmácia e Saúde', teto: 200, tipo: 'Variável' },
+    { mes_ref: mesAtual, categoria: 'Casa e Manutenção', teto: 0, tipo: 'Variável' },
+    { mes_ref: mesAtual, categoria: 'Educação', teto: 0, tipo: 'Variável' },
+    { mes_ref: mesAtual, categoria: 'Vestuário', teto: 0, tipo: 'Variável' },
+    { mes_ref: mesAtual, categoria: 'Outros', teto: 0, tipo: 'Variável' },
+    { mes_ref: mesAtual, categoria: 'Reserva', teto: 300, tipo: 'Meta' }
+  ];
+
+  const reserva: TransacaoReserva[] = [
+    {
+      id: 'vit-res-1',
+      data: `${mesAnterior}-05`,
+      valor: 5100,
+      tipo: 'Aporte',
+      motivo: 'Saldo acumulado da reserva',
+      saldo_acumulado: 5100
+    },
+    {
+      id: 'vit-res-2',
+      data: formatarData(Math.min(5, hoje)),
+      valor: 300,
+      tipo: 'Aporte',
+      motivo: 'Aporte mensal na reserva',
+      saldo_acumulado: 5400
+    }
+  ];
+
+  const config: Configuracao = {
+    ...CONFIG_PADRAO,
+    nome_familia: 'Ana & Pedro',
+    nome_parceiro_1: 'Ana',
+    nome_parceiro_2: 'Pedro',
+    renda_liquida_mensal: 7200,
+    dia_pagamento: 5,
+    meta_reserva_mensal: 300,
+    colchao_meta: 9000,
+    email_1: '',
+    email_2: '',
+    onboarding_concluido: true
+  };
+
+  return {
+    lancamentos,
+    rendasExtras: [],
+    fixas,
+    orcamento,
+    categorias: [...CATEGORIAS_PADRAO],
+    reserva,
+    config,
+    alertasLog: [],
+    ultimoQuem: 'Ele',
+    diaAtualSimulado: null,
+    mesAtivo: mesAtual
+  };
+}
+
+/**
  * Salva apenas preferências locais do aparelho no localStorage.
  * Os dados financeiros da família têm o Firestore como fonte da verdade.
  */
 export function salvarEstado(estado: Partial<AppState>) {
+  if (modoVitrineAtivo) return;
   try {
     if (estado.ultimoQuem !== undefined) {
       localStorage.setItem(DEVICE_PREF_KEYS.ULTIMO_QUEM, estado.ultimoQuem);

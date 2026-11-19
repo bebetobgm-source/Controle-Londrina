@@ -45,13 +45,15 @@ interface Props {
   setAppState: React.Dispatch<React.SetStateAction<AppState>>;
   onAcessarConselheiro: () => void;
   onAbrirConfigSaaS?: (aba: 'casal' | 'orcamento' | 'virar_mes' | 'assinatura') => void;
+  ocultarAvisoDemonstracao?: boolean;
 }
 
 export const PainelDoMes: React.FC<Props> = ({
   appState,
   setAppState,
   onAcessarConselheiro,
-  onAbrirConfigSaaS
+  onAbrirConfigSaaS,
+  ocultarAvisoDemonstracao = false
 }) => {
   const agora = new Date();
   const diaAtual = appState.diaAtualSimulado || agora.getDate();
@@ -427,7 +429,7 @@ export const PainelDoMes: React.FC<Props> = ({
             </div>
 
         {/* Banner para limpar lançamentos de exemplo se existirem */}
-        {temLancamentosExemplo && (
+        {!ocultarAvisoDemonstracao && temLancamentosExemplo && (
           <div className="my-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-200">
             <div className="flex items-start gap-2">
               <Sparkles className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
@@ -436,8 +438,7 @@ export const PainelDoMes: React.FC<Props> = ({
                   Gastos de demonstração detectados
                 </strong>
                 <p className="text-neutral-300 leading-relaxed mb-2.5">
-                  O aplicativo incluiu 4 lançamentos de teste como exemplo inicial (Muffato, Posto, Feira, Farmácia = R$ 679,70).
-                  Deseja removê-los e manter apenas seus gastos reais (como os R$ 75,00 do Arnaldo Lanches)?
+                  Encontramos lançamentos de exemplo (Muffato, Posto, Feira, Farmácia). Deseja removê-los e manter apenas os seus gastos reais?
                 </p>
                 <button
                   type="button"

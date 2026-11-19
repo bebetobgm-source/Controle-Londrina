@@ -2,6 +2,8 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { User } from 'firebase/auth';
 import {
   carregarEstadoInicial,
+  criarEstadoVitrine,
+  definirModoVitrine,
   salvarEstado,
   AppState,
   obterRotuloQuem,
@@ -66,22 +68,40 @@ import {
   googleSignOut
 } from './services/googleAuth';
 
-type AbaPadrao = 'lancamento' | 'painel' | 'conselheiro';
-type AbaDev = 'simulador' | 'testes';
+type AbaPadrao = 'lancamento' | 'painel' | 'conselheiro' | 'simulador';
+type AbaDev = 'testes';
 type AbaAtiva = AbaPadrao | AbaDev;
 
 const SESSION_INVITE_KEY = 'orcamento_pending_invite_token_v1';
 
 export default function App() {
-  const [appState, setAppState] = useState<AppState>(() => carregarEstadoInicial());
+  const [isVitrineMode] = useState<boolean>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('vitrine') === '1';
+  });
+  const [isPrintMode] = useState<boolean>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('print') === '1';
+  });
+  const [appState, setAppState] = useState<AppState>(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('vitrine') === '1') {
+      definirModoVitrine(true);
+      return criarEstadoVitrine();
+    }
+    return carregarEstadoInicial();
+  });
   const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('lancamento');
   const [isDevMode] = useState<boolean>(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('dev') === '1';
+    return params.get('dev') === '1' && params.get('vitrine') !== '1';
   });
 
   // Autenticação Google e Família no Firestore
-  const [authVerificado, setAuthVerificado] = useState<boolean>(false);
+  const [authVerificado, setAuthVerificado] = useState<boolean>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('vitrine') === '1';
+  });
   const [usuarioAtual, setUsuarioAtual] = useState<User | null>(null);
   const [carregandoLogin, setCarregandoLogin] = useState<boolean>(false);
   const [erroLogin, setErroLogin] = useState<string | null>(null);
@@ -91,7 +111,10 @@ export default function App() {
   const [dadosFamiliaCarregados, setDadosFamiliaCarregados] = useState<boolean>(false);
   const [precisaOnboarding, setPrecisaOnboarding] = useState<boolean>(false);
   const [salvandoOnboarding, setSalvandoOnboarding] = useState<boolean>(false);
-  const [membrosConectados, setMembrosConectados] = useState<string[]>([]);
+  const [membrosConectados, setMembrosConectados] = useState<string[]>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('vitrine') === '1' ? ['vitrine-ana', 'vitrine-pedro'] : [];
+  });
   const [exibirVitrineLanding, setExibirVitrineLanding] = useState<boolean>(false);
   const [rotaLegal, setRotaLegal] = useState<'termos' | 'privacidade' | null>(() => {
     const p = window.location.pathname.replace(/\/+$/, '');
@@ -176,8 +199,9 @@ export default function App() {
     }
   }, []);
 
-  // 3. Observar estado de autenticação do Firebase (Login obrigatório)
+  // 3. Observar estado de autenticação do Firebase (Login obrigatório; ignorado no modo vitrine)
   useEffect(() => {
+    if (isVitrineMode) return;
     const unsubUser = observeFirebaseAuth(user => {
       setUsuarioAtual(user);
       setAuthVerificado(true);
@@ -194,7 +218,7 @@ export default function App() {
     return () => {
       unsubUser();
     };
-  }, []);
+  }, [isVitrineMode]);
 
   // 4. Quando o usuário faz login: gravar e-mail em users/{uid}.email, validar convite pendente e buscar users/{uid}
   const validarTokenConvite = useCallback(async (token: string) => {
@@ -211,7 +235,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!usuarioAtual) return;
+    if (isVitrineMode || !usuarioAtual) return;
     let cancelado = false;
 
     async function carregarPerfilEFamilia() {
@@ -257,7 +281,7 @@ export default function App() {
 
   // 5. Assinar em tempo real (onSnapshot) a família ativa e subscriptions/{familyId} no Firestore + POST /api/claim
   useEffect(() => {
-    if (!usuarioAtual || !familyId) return;
+    if (isVitrineMode || !usuarioAtual || !familyId) return;
 
     let cancelado = false;
     setDadosFamiliaCarregados(false);
@@ -432,6 +456,7 @@ export default function App() {
   };
 
   const handleAbrirConfigSaaS = (aba: 'casal' | 'orcamento' | 'virar_mes' | 'assinatura' = 'casal') => {
+    if (isVitrineMode) return;
     setAbaModalSaaS(aba);
     setModalSaaSAberto(true);
   };
@@ -448,7 +473,7 @@ export default function App() {
   }
 
   // Enquanto verifica sessão do Firebase Auth
-  if (!authVerificado || (usuarioAtual && carregandoFamilia && !familyId && !precisaOnboarding)) {
+  if (!isVitrineMode && (!authVerificado || (usuarioAtual && carregandoFamilia && !familyId && !precisaOnboarding))) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-4">
         <div className="flex flex-col items-center gap-3">
@@ -462,7 +487,7 @@ export default function App() {
   }
 
   // REGRA 2: LOGIN OBRIGATÓRIO — Sem login (ou se abriu a vitrine), mostrar só a LandingPageSaaS
-  if (!usuarioAtual || exibirVitrineLanding) {
+  if (exibirVitrineLanding || (!isVitrineMode && !usuarioAtual)) {
     return (
       <LandingPageSaaS
         estaLogado={Boolean(usuarioAtual)}
@@ -479,7 +504,7 @@ export default function App() {
             handleEntrarComGoogle();
           }
         }}
-        onVoltarPainelAtual={usuarioAtual ? () => setExibirVitrineLanding(false) : undefined}
+        onVoltarPainelAtual={(usuarioAtual || isVitrineMode) ? () => setExibirVitrineLanding(false) : undefined}
       />
     );
   }
@@ -770,8 +795,18 @@ export default function App() {
           abaAtiva === 'lancamento' ? 'pb-44' : 'pb-24'
         }`}
       >
+        {/* Faixa discreta no topo para Modo demonstração (?vitrine=1), oculta se &print=1 */}
+        {isVitrineMode && !isPrintMode && (
+          <div
+            id="banner-modo-demonstracao"
+            className="mt-2 flex items-center justify-center rounded-xl border border-neutral-800 bg-neutral-900/90 px-3 py-1 text-[11px] font-medium text-neutral-400"
+          >
+            Modo demonstração
+          </div>
+        )}
+
         {/* Banner Discreto no Topo Durante o Trial */}
-        {infoAcesso.emTrial && infoAcesso.temAcesso && (
+        {!isVitrineMode && infoAcesso.emTrial && infoAcesso.temAcesso && (
           <div
             id="banner-trial-topo"
             className="mt-2 flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-950/30 px-3 py-1.5 text-[11px] text-emerald-200"
@@ -893,14 +928,16 @@ export default function App() {
                 <Crown className="h-3 w-3 text-emerald-400" />
                 <span>Sobre o Casal no Azul</span>
               </button>
-              <button
-                type="button"
-                onClick={() => handleAbrirConfigSaaS('casal')}
-                className="p-1.5 rounded-lg border border-neutral-800 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
-                title="Configurar Casal, Tetos, Convite e Virada de Mês"
-              >
-                <Settings className="h-3.5 w-3.5" />
-              </button>
+              {!isVitrineMode && (
+                <button
+                  type="button"
+                  onClick={() => handleAbrirConfigSaaS('casal')}
+                  className="p-1.5 rounded-lg border border-neutral-800 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+                  title="Configurar Casal, Tetos, Convite e Virada de Mês"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -1001,7 +1038,8 @@ export default function App() {
               appState={appState}
               setAppState={setAppState}
               onAcessarConselheiro={() => setAbaAtiva('conselheiro')}
-              onAbrirConfigSaaS={handleAbrirConfigSaaS}
+              onAbrirConfigSaaS={isVitrineMode ? undefined : handleAbrirConfigSaaS}
+              ocultarAvisoDemonstracao={isVitrineMode}
             />
           )}
 
@@ -1012,13 +1050,13 @@ export default function App() {
             />
           )}
 
-          {isDevMode && abaAtiva === 'simulador' && (
+          {abaAtiva === 'simulador' && (
             <SimuladorView
               appState={appState}
             />
           )}
 
-          {isDevMode && abaAtiva === 'testes' && (
+          {isDevMode && !isVitrineMode && abaAtiva === 'testes' && (
             <TestesECodigoView
               appState={appState}
               setAppState={setAppState}
@@ -1028,19 +1066,21 @@ export default function App() {
         </div>
 
         {/* Modal Central SaaS (Casal, Link Seguro de 24 Caracteres, Tetos, Virar Mês, Planos) */}
-        <GestaoCasalSaaSModal
-          aberto={modalSaaSAberto}
-          abaInicial={abaModalSaaS}
-          familyId={familyId}
-          membrosConectados={membrosConectados}
-          emailUsuario={usuarioAtual.email}
-          subscription={subscription}
-          appState={appState}
-          setAppState={setAppState}
-          onFechar={() => setModalSaaSAberto(false)}
-          onAbrirLandingPage={() => setExibirVitrineLanding(true)}
-          onSairConta={handleSairConta}
-        />
+        {!isVitrineMode && usuarioAtual && (
+          <GestaoCasalSaaSModal
+            aberto={modalSaaSAberto}
+            abaInicial={abaModalSaaS}
+            familyId={familyId}
+            membrosConectados={membrosConectados}
+            emailUsuario={usuarioAtual.email}
+            subscription={subscription}
+            appState={appState}
+            setAppState={setAppState}
+            onFechar={() => setModalSaaSAberto(false)}
+            onAbrirLandingPage={() => setExibirVitrineLanding(true)}
+            onSairConta={handleSairConta}
+          />
+        )}
 
         {/* Barra de Navegação Inferior Fixa (64px + safe-area-inset-bottom, sempre visível) */}
         <nav
@@ -1090,36 +1130,34 @@ export default function App() {
               <span className="text-[11px]">Conselho</span>
             </button>
 
-            {isDevMode && (
-              <>
-                <button
-                  id="tab-btn-simular"
-                  type="button"
-                  onClick={() => setAbaAtiva('simulador')}
-                  className={`flex flex-col items-center gap-1 rounded-xl px-3 py-1.5 transition-all active:scale-95 ${
-                    abaAtiva === 'simulador'
-                      ? 'text-white font-bold'
-                      : 'text-neutral-400 hover:text-neutral-200'
-                  }`}
-                >
-                  <Calculator className={`h-5 w-5 ${abaAtiva === 'simulador' ? 'stroke-[2.5]' : 'stroke-2'}`} />
-                  <span className="text-[11px]">Simular</span>
-                </button>
+            <button
+              id="tab-btn-simular"
+              type="button"
+              onClick={() => setAbaAtiva('simulador')}
+              className={`flex flex-col items-center gap-1 rounded-xl px-3 py-1.5 transition-all active:scale-95 ${
+                abaAtiva === 'simulador'
+                  ? 'text-white font-bold'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <Calculator className={`h-5 w-5 ${abaAtiva === 'simulador' ? 'stroke-[2.5]' : 'stroke-2'}`} />
+              <span className="text-[11px]">Simular</span>
+            </button>
 
-                <button
-                  id="tab-btn-testes"
-                  type="button"
-                  onClick={() => setAbaAtiva('testes')}
-                  className={`flex flex-col items-center gap-1 rounded-xl px-3 py-1.5 transition-all active:scale-95 ${
-                    abaAtiva === 'testes'
-                      ? 'text-emerald-400 font-bold'
-                      : 'text-neutral-400 hover:text-neutral-200'
-                  }`}
-                >
-                  <FlaskConical className={`h-5 w-5 ${abaAtiva === 'testes' ? 'stroke-[2.5]' : 'stroke-2'}`} />
-                  <span className="text-[11px]">Testes</span>
-                </button>
-              </>
+            {isDevMode && !isVitrineMode && (
+              <button
+                id="tab-btn-testes"
+                type="button"
+                onClick={() => setAbaAtiva('testes')}
+                className={`flex flex-col items-center gap-1 rounded-xl px-3 py-1.5 transition-all active:scale-95 ${
+                  abaAtiva === 'testes'
+                    ? 'text-emerald-400 font-bold'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                <FlaskConical className={`h-5 w-5 ${abaAtiva === 'testes' ? 'stroke-[2.5]' : 'stroke-2'}`} />
+                <span className="text-[11px]">Testes</span>
+              </button>
             )}
           </div>
         </nav>

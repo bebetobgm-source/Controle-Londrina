@@ -676,7 +676,7 @@ export const LancamentoRapido: React.FC<Props> = ({ appState, setAppState, onAce
                 list="estabelecimentos-datalist"
                 value={estabelecimento}
                 onChange={e => setEstabelecimento(e.target.value)}
-                placeholder="Ex: Arnaldo Lanches, Muffato Duque..."
+                placeholder="Ex: padaria, posto, supermercado..."
                 className="mt-1 w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:border-neutral-500 focus:outline-none"
               />
               <datalist id="estabelecimentos-datalist">
