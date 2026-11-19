@@ -425,20 +425,20 @@ export const LandingPageSaaS: React.FC<Props> = ({
           className="border-t border-neutral-900 py-16 sm:py-24"
         >
           <div className="mx-auto max-w-5xl px-5">
-            <div className="grid grid-cols-1 gap-10 lg:grid-cols-12 lg:items-center">
-              <div className="lg:col-span-5 space-y-4">
-                <p className="text-xs font-medium text-emerald-400">
-                  Simulador ao vivo
-                </p>
-                <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white [text-wrap:balance]">
-                  Descubra o número do seu casal
-                </h2>
-                <p className="text-sm sm:text-base text-neutral-400 leading-relaxed">
-                  Arraste os valores abaixo para ver, na prática, quanto vocês teriam livre por dia para mercado, combustível e lazer — já separando R$ 300 por mês para a reserva de emergência.
-                </p>
-              </div>
+            <div className="grid grid-cols-1 gap-12 lg:grid-cols-12 lg:items-center">
+              <div className="lg:col-span-7 space-y-6">
+                <div className="space-y-3">
+                  <p className="text-xs font-medium text-emerald-400">
+                    Simulador ao vivo
+                  </p>
+                  <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white [text-wrap:balance]">
+                    Descubra o número do seu casal
+                  </h2>
+                  <p className="text-sm sm:text-base text-neutral-400 leading-relaxed">
+                    Arraste os valores abaixo para ver, na prática, quanto vocês teriam livre por dia para mercado, combustível e lazer — já separando R$ 300 por mês para a reserva de emergência.
+                  </p>
+                </div>
 
-              <div className="lg:col-span-7">
                 <div className="rounded-2xl border border-neutral-800 bg-[#121212] p-6 sm:p-8 space-y-6">
                   <div className="space-y-5">
                     <div>
@@ -508,6 +508,18 @@ export const LandingPageSaaS: React.FC<Props> = ({
                     </p>
                   </div>
                 </div>
+              </div>
+
+              <div className="lg:col-span-5 flex flex-col items-center gap-4">
+                <MolduraCelular
+                  src="/screens/simular.png"
+                  alt="Tela do simulador de compras do Casal no Azul"
+                  placeholderTitulo="Simulador de compra"
+                  placeholderSubtitulo="Veja o impacto antes de passar o cartão"
+                />
+                <p className="text-xs font-medium text-neutral-400 text-center">
+                  Simule antes de comprar: a reserva aguenta?
+                </p>
               </div>
             </div>
           </div>
