@@ -34,6 +34,7 @@ import { ConselheiroView } from './components/ConselheiroView';
 import { SimuladorView } from './components/SimuladorView';
 import { TestesECodigoView } from './components/TestesECodigoView';
 import { LandingPageSaaS } from './components/LandingPageSaaS';
+import { PaginasLegais } from './components/PaginasLegais';
 import { OnboardingCasal } from './components/OnboardingCasal';
 import { GestaoCasalSaaSModal } from './components/GestaoCasalSaaSModal';
 import { verificarAlertas, formatarMoeda } from './services/engine';
@@ -92,6 +93,12 @@ export default function App() {
   const [salvandoOnboarding, setSalvandoOnboarding] = useState<boolean>(false);
   const [membrosConectados, setMembrosConectados] = useState<string[]>([]);
   const [exibirVitrineLanding, setExibirVitrineLanding] = useState<boolean>(false);
+  const [rotaLegal, setRotaLegal] = useState<'termos' | 'privacidade' | null>(() => {
+    const p = window.location.pathname.replace(/\/+$/, '');
+    if (p === '/termos') return 'termos';
+    if (p === '/privacidade') return 'privacidade';
+    return null;
+  });
 
   // Assinatura Real (subscriptions/{familyId})
   const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
@@ -122,7 +129,7 @@ export default function App() {
   const [isInAppBrowser, setIsInAppBrowser] = useState<boolean>(false);
   const [notificacaoSincronizacao, setNotificacaoSincronizacao] = useState<string | null>(null);
 
-  // 1. Detectar parâmetro de URL (?convite=<token>)
+  // 1. Detectar parâmetro de URL (?convite=<token>) e sincronizar rotas /termos e /privacidade
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -137,6 +144,24 @@ export default function App() {
     } catch (e) {
       console.warn('Erro ao processar parâmetros da URL:', e);
     }
+
+    const handlePopState = () => {
+      const p = window.location.pathname.replace(/\/+$/, '');
+      if (p === '/termos') setRotaLegal('termos');
+      else if (p === '/privacidade') setRotaLegal('privacidade');
+      else setRotaLegal(null);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navegarRotaLegal = useCallback((destino: '/' | '/termos' | '/privacidade') => {
+    window.history.pushState({}, '', destino);
+    if (destino === '/termos') setRotaLegal('termos');
+    else if (destino === '/privacidade') setRotaLegal('privacidade');
+    else setRotaLegal(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   // 2. Detectar navegador embutido do WhatsApp/Instagram
@@ -411,6 +436,17 @@ export default function App() {
     setModalSaaSAberto(true);
   };
 
+  // Páginas públicas de Termos de Uso (/termos) e Política de Privacidade (/privacidade)
+  if (rotaLegal) {
+    return (
+      <PaginasLegais
+        tipo={rotaLegal}
+        onVoltar={() => navegarRotaLegal('/')}
+        onAlternarTipo={novo => navegarRotaLegal(novo === 'termos' ? '/termos' : '/privacidade')}
+      />
+    );
+  }
+
   // Enquanto verifica sessão do Firebase Auth
   if (!authVerificado || (usuarioAtual && carregandoFamilia && !familyId && !precisaOnboarding)) {
     return (
@@ -434,6 +470,8 @@ export default function App() {
         erroLogin={erroLogin}
         tokenConvitePendente={tokenConvitePendente}
         nomeFamiliaAtual={appState.config.nome_familia}
+        onAbrirTermos={() => navegarRotaLegal('/termos')}
+        onAbrirPrivacidade={() => navegarRotaLegal('/privacidade')}
         onEntrarComGoogle={() => {
           if (usuarioAtual) {
             setExibirVitrineLanding(false);
