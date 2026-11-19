@@ -92,6 +92,9 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
   const proximoMesRef = navegarMes(appState.mesAtivo, 1);
   const [transferirSobra, setTransferirSobra] = useState(true);
 
+  // Estado Aba 4: Painel Gerenciar Assinatura
+  const [mostrarGerenciarAssinatura, setMostrarGerenciarAssinatura] = useState(false);
+
   if (!aberto) return null;
 
   const projecaoAtual = calcularProjecaoFechamento(
@@ -607,79 +610,140 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                 )}
               </div>
 
-              {/* Botões Reais de Checkout Kiwify (Mensal e Anual) */}
-              <div className="space-y-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-neutral-300 block">
-                  Assinar Plano Casal (2 aparelhos inclusos)
-                </span>
-                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                  <a
-                    href={urlCheckoutMensal}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`rounded-xl border p-3.5 text-left transition-all flex flex-col justify-between ${
-                      subscription?.plano === 'mensal' && subscription?.status === 'active'
-                        ? 'border-emerald-400 bg-neutral-800/80'
-                        : 'border-neutral-800 bg-neutral-950 hover:border-emerald-500/50'
-                    }`}
-                  >
-                    <div>
-                      <span className="text-xs font-bold text-white block">Plano Mensal</span>
-                      <span className="font-mono text-base font-extrabold text-emerald-400 block mt-0.5">
-                        R$ 19,90/mês
-                      </span>
-                      <span className="text-[10px] text-neutral-400 block mt-0.5">
-                        Renovação mensal • Cancele quando quiser
-                      </span>
-                    </div>
-                    <span className="mt-3 inline-flex items-center justify-center gap-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 px-3 py-2 text-[11px] font-extrabold text-white">
-                      <span>Assinar Mensal</span>
-                      <ExternalLink className="h-3 w-3 text-emerald-400" />
-                    </span>
-                  </a>
+              {/* Controle de Exibição dos Planos (Evitar Assinatura Duplicada) */}
+              {(() => {
+                const statusAtual = subscription?.status || 'trial';
+                const planoAtual = subscription?.plano || 'trial';
+                const fimPeriodoMs = subscription?.currentPeriodEnd
+                  ? subscription.currentPeriodEnd.getTime()
+                  : 0;
+                const periodoAindaVigente = fimPeriodoMs > Date.now();
 
-                  <a
-                    href={urlCheckoutAnual}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`rounded-xl border p-3.5 text-left transition-all flex flex-col justify-between ${
-                      subscription?.plano === 'anual' && subscription?.status === 'active'
-                        ? 'border-emerald-400 bg-neutral-800/80'
-                        : 'border-emerald-500/40 bg-emerald-950/20 hover:border-emerald-400'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-white">Plano Anual</span>
-                        <span className="rounded bg-emerald-400 px-1.5 py-0.5 text-[9px] font-extrabold text-neutral-950 uppercase">
-                          -25% OFF
+                const assinaturaAtivaOuAtrasada =
+                  statusAtual === 'active' || statusAtual === 'late';
+
+                const mostrarDoisPlanosNormais =
+                  !subscription ||
+                  statusAtual === 'trial' ||
+                  statusAtual === 'refunded' ||
+                  (statusAtual === 'canceled' && !periodoAindaVigente);
+
+                const mostrarCardMudarParaAnual =
+                  (assinaturaAtivaOuAtrasada && planoAtual === 'mensal') ||
+                  (statusAtual === 'canceled' && periodoAindaVigente && planoAtual === 'mensal');
+
+                return (
+                  <div className="space-y-2.5">
+                    {mostrarDoisPlanosNormais && (
+                      <>
+                        <span className="text-xs font-bold uppercase tracking-wider text-neutral-300 block">
+                          Assinar Plano Casal (2 aparelhos inclusos)
                         </span>
-                      </div>
-                      <span className="font-mono text-base font-extrabold text-emerald-400 block mt-0.5">
-                        R$ 14,90/mês
-                      </span>
-                      <span className="text-[10px] text-neutral-300 block mt-0.5">
-                        R$ 178,80/ano • Economize R$ 60
-                      </span>
-                    </div>
-                    <span className="mt-3 inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-400 hover:bg-emerald-300 px-3 py-2 text-[11px] font-extrabold text-neutral-950">
-                      <span>Assinar Anual</span>
-                      <ExternalLink className="h-3 w-3" />
-                    </span>
-                  </a>
-                </div>
+                        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                          <a
+                            href={urlCheckoutMensal}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded-xl border border-neutral-800 bg-neutral-950 hover:border-emerald-500/50 p-3.5 text-left transition-all flex flex-col justify-between"
+                          >
+                            <div>
+                              <span className="text-xs font-bold text-white block">Plano Mensal</span>
+                              <span className="font-mono text-base font-extrabold text-emerald-400 block mt-0.5">
+                                R$ 19,90/mês
+                              </span>
+                              <span className="text-[10px] text-neutral-400 block mt-0.5">
+                                Renovação mensal • Cancele quando quiser
+                              </span>
+                            </div>
+                            <span className="mt-3 inline-flex items-center justify-center gap-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 px-3 py-2 text-[11px] font-extrabold text-white">
+                              <span>Assinar Mensal</span>
+                              <ExternalLink className="h-3 w-3 text-emerald-400" />
+                            </span>
+                          </a>
 
-                {/* Link para Gerenciar Assinatura na Kiwify */}
-                <a
-                  href={KIWIFY_AREA_CLIENTE}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-950 hover:bg-neutral-800 px-4 py-2.5 text-xs font-semibold text-neutral-300 hover:text-white transition-colors"
-                >
-                  <span>Gerenciar assinatura (Kiwify)</span>
-                  <ExternalLink className="h-3.5 w-3.5 text-neutral-400" />
-                </a>
-              </div>
+                          <a
+                            href={urlCheckoutAnual}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded-xl border border-emerald-500/40 bg-emerald-950/20 hover:border-emerald-400 p-3.5 text-left transition-all flex flex-col justify-between"
+                          >
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-white">Plano Anual</span>
+                                <span className="rounded bg-emerald-400 px-1.5 py-0.5 text-[9px] font-extrabold text-neutral-950 uppercase">
+                                  -25% OFF
+                                </span>
+                              </div>
+                              <span className="font-mono text-base font-extrabold text-emerald-400 block mt-0.5">
+                                R$ 14,90/mês
+                              </span>
+                              <span className="text-[10px] text-neutral-300 block mt-0.5">
+                                R$ 178,80/ano • Economize R$ 60
+                              </span>
+                            </div>
+                            <span className="mt-3 inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-400 hover:bg-emerald-300 px-3 py-2 text-[11px] font-extrabold text-neutral-950">
+                              <span>Assinar Anual</span>
+                              <ExternalLink className="h-3 w-3" />
+                            </span>
+                          </a>
+                        </div>
+                      </>
+                    )}
+
+                    {mostrarCardMudarParaAnual && (
+                      <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3.5 space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-emerald-300">
+                            Mudar para o Anual e economizar R$ 60/ano
+                          </span>
+                          <span className="rounded bg-emerald-400/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-mono font-bold text-emerald-300">
+                            R$ 14,90/mês
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-neutral-400 leading-relaxed">
+                          Antes, cancele o plano mensal pelo link &apos;Gerenciar assinatura&apos; do seu e-mail da Kiwify, para não pagar os dois.
+                        </p>
+                        <a
+                          href={urlCheckoutAnual}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 px-3 py-2 text-xs font-extrabold text-emerald-300 transition-colors"
+                        >
+                          <span>Mudar para o Anual e economizar R$ 60/ano</span>
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
+                    )}
+
+                    {/* Botão e Painel para Gerenciar Assinatura na Kiwify */}
+                    <button
+                      type="button"
+                      onClick={() => setMostrarGerenciarAssinatura(prev => !prev)}
+                      className="w-full flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-950 hover:bg-neutral-800 px-4 py-2.5 text-xs font-semibold text-neutral-300 hover:text-white transition-colors"
+                    >
+                      <span>Gerenciar assinatura (Kiwify)</span>
+                      <ExternalLink className="h-3.5 w-3.5 text-neutral-400" />
+                    </button>
+
+                    {mostrarGerenciarAssinatura && (
+                      <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3.5 space-y-3 animate-in fade-in">
+                        <p className="text-xs text-neutral-300 leading-relaxed">
+                          Para cancelar, trocar o cartão ou ver suas cobranças, abra o e-mail de confirmação de compra da Kiwify (procure por &apos;Casal no Azul&apos; na sua caixa de entrada) e clique em &apos;Gerenciar assinatura&apos;. Não achou o e-mail? Fale com a gente.
+                        </p>
+                        <a
+                          href={KIWIFY_AREA_CLIENTE}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 px-3 py-2.5 text-xs font-bold text-white transition-colors"
+                        >
+                          <span>Falar com o suporte</span>
+                          <ExternalLink className="h-3.5 w-3.5 text-emerald-400" />
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Exportar Dados (CSV compatível com Excel em português) */}
               <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3.5 space-y-2.5">
