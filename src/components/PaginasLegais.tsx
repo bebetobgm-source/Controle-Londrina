@@ -3,7 +3,7 @@ import { ArrowLeft } from 'lucide-react';
 
 export const EMAIL_CONTATO_LEGAL = 'bebeto.bgm@gmail.com';
 export const CONTROLADOR_NOME = 'Humberto Vinicius de Lima Vieira Santos';
-export const CONTROLADOR_DOCUMENTO = 'SEU_CPF_OU_CNPJ';
+export const CONTROLADOR_DOCUMENTO = 'CPF 04954504996';
 const ULTIMA_ATUALIZACAO = '2026';
 
 interface Props {
