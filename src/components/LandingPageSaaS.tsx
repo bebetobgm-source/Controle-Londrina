@@ -9,6 +9,7 @@ import {
   Smartphone
 } from 'lucide-react';
 import { formatarMoeda } from '../services/engine';
+import { rastrearLead } from '../config/rastreamento';
 
 // ============================================================================
 // CONSTANTES FÁCEIS DE EDITAR (copy do fundador, suporte e listas)
@@ -302,7 +303,7 @@ export const LandingPageSaaS: React.FC<Props> = ({
               <button
                 type="button"
                 disabled={carregandoLogin}
-                onClick={() => onEntrarComGoogle('trial')}
+                onClick={() => { rastrearLead(); onEntrarComGoogle('trial'); }}
                 className="rounded-lg bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 px-4 py-2 text-xs font-bold text-neutral-950 transition-colors whitespace-nowrap shrink-0"
               >
                 {carregandoLogin ? 'Conectando...' : 'Entrar com Google'}
@@ -331,7 +332,7 @@ export const LandingPageSaaS: React.FC<Props> = ({
               <button
                 type="button"
                 disabled={carregandoLogin}
-                onClick={() => onEntrarComGoogle('trial')}
+                onClick={() => { rastrearLead(); onEntrarComGoogle('trial'); }}
                 className="shrink-0 rounded-xl bg-sky-400 hover:bg-sky-300 disabled:opacity-50 px-5 py-3 text-xs font-bold text-neutral-950 transition-colors whitespace-nowrap"
               >
                 {carregandoLogin ? 'Conectando...' : 'Entrar e aceitar convite'}
@@ -359,7 +360,7 @@ export const LandingPageSaaS: React.FC<Props> = ({
                 <button
                   type="button"
                   disabled={carregandoLogin}
-                  onClick={() => onEntrarComGoogle('trial')}
+                  onClick={() => { rastrearLead(); onEntrarComGoogle('trial'); }}
                   className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 px-7 py-4 text-sm font-bold text-neutral-950 transition-colors whitespace-nowrap"
                 >
                   <span>{textoBotaoPrincipal}</span>
@@ -648,7 +649,7 @@ export const LandingPageSaaS: React.FC<Props> = ({
                 <button
                   type="button"
                   disabled={carregandoLogin}
-                  onClick={() => onEntrarComGoogle('mensal')}
+                  onClick={() => { rastrearLead(); onEntrarComGoogle('mensal'); }}
                   className="mt-8 w-full rounded-xl border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 py-3.5 px-5 text-sm font-bold text-white transition-colors"
                 >
                   {textoBotaoPrincipal}
@@ -684,7 +685,7 @@ export const LandingPageSaaS: React.FC<Props> = ({
                 <button
                   type="button"
                   disabled={carregandoLogin}
-                  onClick={() => onEntrarComGoogle('anual')}
+                  onClick={() => { rastrearLead(); onEntrarComGoogle('anual'); }}
                   className="mt-8 w-full rounded-xl bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 py-3.5 px-5 text-sm font-bold text-neutral-950 transition-colors"
                 >
                   {textoBotaoPrincipal}
@@ -752,7 +753,7 @@ export const LandingPageSaaS: React.FC<Props> = ({
               <button
                 type="button"
                 disabled={carregandoLogin}
-                onClick={() => onEntrarComGoogle('trial')}
+                onClick={() => { rastrearLead(); onEntrarComGoogle('trial'); }}
                 className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 px-8 py-4 text-sm font-bold text-neutral-950 transition-colors whitespace-nowrap"
               >
                 <span>{textoBotaoPrincipal}</span>

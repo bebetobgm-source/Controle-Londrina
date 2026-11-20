@@ -187,6 +187,9 @@ export const PaginasLegais: React.FC<Props> = ({
               <p>
                 O processamento de pagamentos é feito pela Kiwify, segundo a política de privacidade própria da plataforma.
               </p>
+              <p>
+                Na página de vendas usamos o Pixel da Meta (Facebook/Instagram) para medir o resultado dos nossos anúncios — por exemplo, saber quantas pessoas clicaram para começar o teste grátis ou foram ao checkout. O Pixel registra eventos de navegação e dados técnicos do aparelho, tratados pela Meta segundo a política de privacidade dela. Nenhum lançamento, valor ou dado financeiro do casal é enviado à Meta. Você pode limitar esse rastreamento nas configurações de anúncios da sua conta Meta ou com bloqueadores no navegador.
+              </p>
             </section>
 
             <section className="space-y-3">

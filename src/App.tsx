@@ -40,6 +40,7 @@ import { PaginasLegais } from './components/PaginasLegais';
 import { OnboardingCasal } from './components/OnboardingCasal';
 import { GestaoCasalSaaSModal } from './components/GestaoCasalSaaSModal';
 import { verificarAlertas, formatarMoeda } from './services/engine';
+import { iniciarPixel, rastrearInicioTeste, rastrearCheckout } from './config/rastreamento';
 import {
   PlusCircle,
   TrendingUp,
@@ -151,6 +152,11 @@ export default function App() {
   const [alertaCriticoDispensado, setAlertaCriticoDispensado] = useState<boolean>(false);
   const [isInAppBrowser, setIsInAppBrowser] = useState<boolean>(false);
   const [notificacaoSincronizacao, setNotificacaoSincronizacao] = useState<string | null>(null);
+
+  // 0. Meta Pixel (não carrega em ?vitrine=1 nem ?dev=1)
+  useEffect(() => {
+    iniciarPixel();
+  }, []);
 
   // 1. Detectar parâmetro de URL (?convite=<token>) e sincronizar rotas /termos e /privacidade
   useEffect(() => {
@@ -602,6 +608,7 @@ export default function App() {
             setAppState(estadoInicial);
             setDadosFamiliaCarregados(true);
             setFamilyId(novoFamilyId);
+            rastrearInicioTeste(novoFamilyId);
             setPrecisaOnboarding(false);
             setAbaAtiva('painel');
             setNotificacaoSincronizacao(
@@ -670,6 +677,7 @@ export default function App() {
               </div>
               <a
                 href={urlCheckoutMensal}
+                onClick={() => rastrearCheckout('mensal')}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 py-2.5 text-xs font-extrabold text-white transition-all"
@@ -698,6 +706,7 @@ export default function App() {
               </div>
               <a
                 href={urlCheckoutAnual}
+                onClick={() => rastrearCheckout('anual')}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-400 hover:bg-emerald-300 py-2.5 text-xs font-extrabold text-neutral-950 transition-all shadow-lg shadow-emerald-500/20"

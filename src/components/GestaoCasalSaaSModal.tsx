@@ -25,6 +25,7 @@ import {
 } from '../services/storage';
 import { SubscriptionData } from '../types';
 import { formatarMoeda, calcularProjecaoFechamento } from '../services/engine';
+import { rastrearCheckout } from '../config/rastreamento';
 import {
   KIWIFY_AREA_CLIENTE,
   montarUrlCheckoutKiwify
@@ -642,6 +643,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                           <a
                             href={urlCheckoutMensal}
+                            onClick={() => rastrearCheckout('mensal')}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="rounded-xl border border-neutral-800 bg-neutral-950 hover:border-emerald-500/50 p-3.5 text-left transition-all flex flex-col justify-between"
@@ -663,6 +665,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
 
                           <a
                             href={urlCheckoutAnual}
+                            onClick={() => rastrearCheckout('anual')}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="rounded-xl border border-emerald-500/40 bg-emerald-950/20 hover:border-emerald-400 p-3.5 text-left transition-all flex flex-col justify-between"
@@ -705,6 +708,7 @@ export const GestaoCasalSaaSModal: React.FC<Props> = ({
                         </p>
                         <a
                           href={urlCheckoutAnual}
+                          onClick={() => rastrearCheckout('anual')}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 px-3 py-2 text-xs font-extrabold text-emerald-300 transition-colors"
