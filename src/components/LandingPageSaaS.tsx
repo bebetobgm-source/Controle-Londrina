@@ -348,12 +348,16 @@ export const LandingPageSaaS: React.FC<Props> = ({
 
           <div className="grid grid-cols-1 gap-12 lg:grid-cols-12 lg:items-center">
             <div className="lg:col-span-7 space-y-6">
-              <h1 className="text-[clamp(2.15rem,4.2vw,3.5rem)] font-extrabold tracking-tight text-white leading-[1.08] [text-wrap:balance]">
-                Saiba exatamente quanto o casal pode gastar hoje sem estourar o mês.
+              <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
+                Para casais que dividem as contas
+              </p>
+              <h1 className="text-[clamp(2rem,4vw,3.3rem)] font-extrabold tracking-tight text-white leading-[1.1] [text-wrap:balance]">
+                Chega de chegar no fim do mês perguntando{' '}
+                <span className="text-emerald-400">“pra onde foi o dinheiro?”</span>
               </h1>
 
-              <p className="text-base sm:text-lg text-neutral-400 leading-relaxed max-w-xl">
-                Um lança o gasto no caixa do mercado, o outro vê na hora. E o app avisa antes de o mês estourar.
+              <p className="text-base sm:text-lg text-neutral-300 leading-relaxed max-w-xl">
+                Um lança o gasto no mercado, o outro vê na hora no celular. E o app mostra quanto vocês ainda podem gastar hoje sem estourar o mês.
               </p>
 
               <div className="pt-2 space-y-3">
@@ -366,9 +370,11 @@ export const LandingPageSaaS: React.FC<Props> = ({
                   <span>{textoBotaoPrincipal}</span>
                   <ArrowRight className="h-4 w-4 shrink-0" />
                 </button>
-                <p className="text-xs text-neutral-400">
-                  Sem cartão de crédito. Entre com o Google em 10 segundos.
-                </p>
+                <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-neutral-300">
+                  <li className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-400" />Sem cartão</li>
+                  <li className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-400" />Sem senha de banco</li>
+                  <li className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-400" />Uma assinatura vale para os dois</li>
+                </ul>
               </div>
             </div>
 
@@ -387,14 +393,14 @@ export const LandingPageSaaS: React.FC<Props> = ({
         {/* b) COMO FUNCIONA (3 passos) */}
         <section
           id="como-funciona"
-          className="border-t border-neutral-900 bg-neutral-950/60 py-16 sm:py-24"
+          className="bg-[#F4F7F5] text-neutral-900 py-16 sm:py-24"
         >
           <div className="mx-auto max-w-5xl px-5">
             <div className="max-w-2xl mb-12">
-              <p className="text-xs font-medium text-emerald-400">
+              <p className="text-xs font-semibold text-emerald-700">
                 Como funciona
               </p>
-              <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-white [text-wrap:balance]">
+              <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900 [text-wrap:balance]">
                 Em poucos minutos os dois celulares já estão no mesmo ritmo
               </h2>
             </div>
@@ -403,15 +409,15 @@ export const LandingPageSaaS: React.FC<Props> = ({
               {PASSOS_COMO_FUNCIONA.map(passo => (
                 <div
                   key={passo.numero}
-                  className="border-t border-neutral-800 pt-6 space-y-3"
+                  className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm space-y-3"
                 >
-                  <span className="font-mono text-sm font-bold text-emerald-400 tabular-nums">
-                    0{passo.numero}
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 font-mono text-sm font-bold text-emerald-700 tabular-nums">
+                    {passo.numero}
                   </span>
-                  <h3 className="text-base font-bold text-white leading-snug">
+                  <h3 className="text-base font-bold text-neutral-900 leading-snug">
                     {passo.titulo}
                   </h3>
-                  <p className="text-sm text-neutral-400 leading-relaxed">
+                  <p className="text-sm text-neutral-600 leading-relaxed">
                     {passo.descricao}
                   </p>
                 </div>
@@ -423,7 +429,7 @@ export const LandingPageSaaS: React.FC<Props> = ({
         {/* c) SIMULADOR ("Descubra o número do seu casal") */}
         <section
           id="simulador"
-          className="border-t border-neutral-900 py-16 sm:py-24"
+          className="py-16 sm:py-24"
         >
           <div className="mx-auto max-w-5xl px-5">
             <div className="grid grid-cols-1 gap-12 lg:grid-cols-12 lg:items-center">
@@ -582,22 +588,22 @@ export const LandingPageSaaS: React.FC<Props> = ({
         </section>
 
         {/* e) POR QUE EU CRIEI */}
-        <section className="border-t border-neutral-900 py-16 sm:py-24">
+        <section className="bg-[#F4F7F5] text-neutral-900 py-16 sm:py-24">
           <div className="mx-auto max-w-3xl px-5">
-            <p className="text-xs font-medium text-emerald-400">
+            <p className="text-xs font-semibold text-emerald-700">
               História real
             </p>
-            <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-white">
+            <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900">
               {HISTORIA_CRIADOR.titulo}
             </h2>
 
-            <div className="mt-6 space-y-4 text-base text-neutral-300 leading-relaxed">
+            <div className="mt-6 space-y-4 text-base text-neutral-700 leading-relaxed">
               {HISTORIA_CRIADOR.paragrafos.map((paragrafo, idx) => (
                 <p key={idx}>{paragrafo}</p>
               ))}
             </div>
 
-            <p className="mt-6 text-sm font-semibold text-white">
+            <p className="mt-6 text-sm font-semibold text-neutral-900">
               — {HISTORIA_CRIADOR.assinatura}
             </p>
           </div>
@@ -698,19 +704,19 @@ export const LandingPageSaaS: React.FC<Props> = ({
         {/* g) PERGUNTAS FREQUENTES (ACORDEÃO) */}
         <section
           id="duvidas"
-          className="border-t border-neutral-900 py-16 sm:py-24"
+          className="bg-[#F4F7F5] text-neutral-900 py-16 sm:py-24"
         >
           <div className="mx-auto max-w-3xl px-5">
             <div className="mb-10">
-              <p className="text-xs font-medium text-emerald-400">
+              <p className="text-xs font-semibold text-emerald-700">
                 Perguntas frequentes
               </p>
-              <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-white">
+              <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900">
                 Tire suas dúvidas antes de começar
               </h2>
             </div>
 
-            <div className="divide-y divide-neutral-800 border-y border-neutral-800">
+            <div className="divide-y divide-neutral-200 border-y border-neutral-200">
               {PERGUNTAS_FREQUENTES.map((item, idx) => {
                 const aberta = faqAberta === idx;
                 return (
@@ -719,17 +725,17 @@ export const LandingPageSaaS: React.FC<Props> = ({
                       type="button"
                       aria-expanded={aberta}
                       onClick={() => setFaqAberta(aberta ? null : idx)}
-                      className="flex w-full items-center justify-between gap-4 py-5 text-left text-sm sm:text-base font-semibold text-white hover:text-emerald-300 transition-colors"
+                      className="flex w-full items-center justify-between gap-4 py-5 text-left text-sm sm:text-base font-semibold text-neutral-900 hover:text-emerald-700 transition-colors"
                     >
                       <span>{item.pergunta}</span>
                       <ChevronDown
-                        className={`h-4 w-4 shrink-0 text-neutral-400 transition-transform duration-200 ${
-                          aberta ? 'rotate-180 text-emerald-400' : ''
+                        className={`h-4 w-4 shrink-0 text-neutral-500 transition-transform duration-200 ${
+                          aberta ? 'rotate-180 text-emerald-700' : ''
                         }`}
                       />
                     </button>
                     {aberta && (
-                      <div className="pb-5 pr-8 text-sm text-neutral-400 leading-relaxed">
+                      <div className="pb-5 pr-8 text-sm text-neutral-600 leading-relaxed">
                         {item.resposta}
                       </div>
                     )}
@@ -741,13 +747,13 @@ export const LandingPageSaaS: React.FC<Props> = ({
         </section>
 
         {/* h) CHAMADA FINAL */}
-        <section className="border-t border-neutral-900 bg-neutral-950/60 py-16 sm:py-24">
+        <section className="bg-neutral-950/60 py-16 sm:py-24">
           <div className="mx-auto max-w-2xl px-5 text-center space-y-6">
             <h2 className="text-2xl sm:text-4xl font-bold tracking-tight text-white [text-wrap:balance]">
               Comece hoje a ver o mês do casal com clareza
             </h2>
             <p className="text-sm sm:text-base text-neutral-400 leading-relaxed">
-              Teste gratuitamente por 7 dias com o seu par. Sem cartão de crédito e sem burocracia.
+              Teste gratuitamente por 7 dias com o seu par. Sem cartão de crédito, sem senha de banco e sem burocracia.
             </p>
             <div className="pt-1 space-y-3">
               <button
