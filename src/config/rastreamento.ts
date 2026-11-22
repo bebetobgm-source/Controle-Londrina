@@ -62,6 +62,16 @@ export function rastrearLead(): void {
   rastrear('Lead');
 }
 
+/** Pessoa tocou em "Começar" dentro do navegador do Instagram/Facebook e viu o aviso para abrir no Chrome/Safari. */
+export function rastrearNavegadorInterno(navegador: string): void {
+  if (!ativo || !window.fbq) return;
+  try {
+    window.fbq('trackCustom', 'AvisoNavegadorInterno', { navegador });
+  } catch {
+    /* rastreamento nunca pode quebrar o app */
+  }
+}
+
 /** Família criada no onboarding = início do teste grátis. Dispara uma única vez por família. */
 export function rastrearInicioTeste(familyId: string): void {
   const chave = `cna_pixel_registro_${familyId}`;

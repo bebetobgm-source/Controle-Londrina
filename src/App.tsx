@@ -40,7 +40,8 @@ import { PaginasLegais } from './components/PaginasLegais';
 import { OnboardingCasal } from './components/OnboardingCasal';
 import { GestaoCasalSaaSModal } from './components/GestaoCasalSaaSModal';
 import { verificarAlertas, formatarMoeda } from './services/engine';
-import { iniciarPixel, rastrearInicioTeste, rastrearCheckout } from './config/rastreamento';
+import { iniciarPixel, rastrearInicioTeste, rastrearCheckout, rastrearNavegadorInterno } from './config/rastreamento';
+import { AvisoNavegadorInterno, detectarNavegadorInterno, NavegadorInterno } from './components/AvisoNavegadorInterno';
 import {
   PlusCircle,
   TrendingUp,
@@ -151,6 +152,8 @@ export default function App() {
   const [abaModalSaaS, setAbaModalSaaS] = useState<'casal' | 'orcamento' | 'virar_mes' | 'assinatura'>('casal');
   const [alertaCriticoDispensado, setAlertaCriticoDispensado] = useState<boolean>(false);
   const [isInAppBrowser, setIsInAppBrowser] = useState<boolean>(false);
+  const [navegadorInterno] = useState<NavegadorInterno | null>(() => detectarNavegadorInterno());
+  const [mostrarAvisoNavegador, setMostrarAvisoNavegador] = useState<boolean>(false);
   const [notificacaoSincronizacao, setNotificacaoSincronizacao] = useState<string | null>(null);
 
   // 0. Meta Pixel (não carrega em ?vitrine=1 nem ?dev=1)
@@ -196,8 +199,7 @@ export default function App() {
   // 2. Detectar navegador embutido do WhatsApp/Instagram
   useEffect(() => {
     try {
-      const ua = navigator.userAgent || navigator.vendor || (window as any).opera || '';
-      if (/FBAN|FBAV|Instagram|WhatsApp|Line|wv/i.test(ua)) {
+      if (detectarNavegadorInterno()) {
         setIsInAppBrowser(true);
       }
     } catch {
@@ -495,6 +497,7 @@ export default function App() {
   // REGRA 2: LOGIN OBRIGATÓRIO — Sem login (ou se abriu a vitrine), mostrar só a LandingPageSaaS
   if (exibirVitrineLanding || (!isVitrineMode && !usuarioAtual)) {
     return (
+      <>
       <LandingPageSaaS
         estaLogado={Boolean(usuarioAtual)}
         carregandoLogin={carregandoLogin}
@@ -506,12 +509,19 @@ export default function App() {
         onEntrarComGoogle={() => {
           if (usuarioAtual) {
             setExibirVitrineLanding(false);
+          } else if (navegadorInterno) {
+            rastrearNavegadorInterno(navegadorInterno);
+            setMostrarAvisoNavegador(true);
           } else {
             handleEntrarComGoogle();
           }
         }}
         onVoltarPainelAtual={(usuarioAtual || isVitrineMode) ? () => setExibirVitrineLanding(false) : undefined}
       />
+      {mostrarAvisoNavegador && navegadorInterno && (
+        <AvisoNavegadorInterno navegador={navegadorInterno} onFechar={() => setMostrarAvisoNavegador(false)} />
+      )}
+      </>
     );
   }
 
@@ -842,7 +852,7 @@ export default function App() {
                 <div className="space-y-1">
                   <p className="font-bold text-amber-300">Atenção ao conectar com o Google no celular:</p>
                   <p className="text-[11px] text-amber-200/90 leading-relaxed">
-                    Você abriu pelo navegador do WhatsApp. O Google bloqueia login aqui. Toque nos <strong>3 pontinhos ⋮</strong> no topo (ou compartilhar no iPhone) e escolha <strong>"Abrir no Chrome"</strong> ou <strong>"Abrir no Safari"</strong>.
+                    Você abriu pelo navegador de um aplicativo (Instagram, Facebook ou WhatsApp). O Google bloqueia login aqui. Toque nos <strong>3 pontinhos ⋮</strong> no topo (ou compartilhar no iPhone) e escolha <strong>"Abrir no Chrome"</strong> ou <strong>"Abrir no Safari"</strong>.
                   </p>
                 </div>
               </div>
