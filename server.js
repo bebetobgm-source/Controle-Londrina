@@ -382,6 +382,42 @@ app.post('/api/claim', express.json(), async (req, res) => {
   }
 });
 
+// Proxy do login do Google (Firebase Auth) pelo próprio domínio.
+// Assim a tela do Google mostra "Prosseguir para casalnoazul.com.br" em vez do domínio firebaseapp.com.
+// Requer no Google Cloud o redirect URI https://casalnoazul.com.br/__/auth/handler (já cadastrado).
+const FIREBASE_AUTH_HOST = `https://${firebaseAppletConfig.authDomain}`;
+app.all(['/__/auth/*', '/__/firebase/*'], async (req, res) => {
+  try {
+    const destino = FIREBASE_AUTH_HOST + req.originalUrl;
+    const cabecalhos = { ...req.headers };
+    delete cabecalhos.host;
+    delete cabecalhos.connection;
+    delete cabecalhos['content-length'];
+    const temCorpo = !['GET', 'HEAD'].includes(req.method);
+    const resposta = await fetch(destino, {
+      method: req.method,
+      headers: cabecalhos,
+      body: temCorpo ? req : undefined,
+      duplex: temCorpo ? 'half' : undefined,
+      redirect: 'manual'
+    });
+    res.status(resposta.status);
+    resposta.headers.forEach((valor, chave) => {
+      const k = chave.toLowerCase();
+      if (['content-encoding', 'content-length', 'transfer-encoding', 'connection'].includes(k)) return;
+      if (k === 'set-cookie') return;
+      res.setHeader(chave, valor);
+    });
+    const cookies = typeof resposta.headers.getSetCookie === 'function' ? resposta.headers.getSetCookie() : [];
+    if (cookies.length) res.setHeader('set-cookie', cookies);
+    const corpo = Buffer.from(await resposta.arrayBuffer());
+    res.end(corpo);
+  } catch (err) {
+    console.error('Erro no proxy de autenticação:', err);
+    res.status(502).send('Falha temporária no login. Tente novamente.');
+  }
+});
+
 // Servir os arquivos estáticos gerados pelo Vite (pasta dist)
 const distPath = path.join(__dirname, 'dist');
 app.use(express.static(distPath));

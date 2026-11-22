@@ -18,7 +18,15 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+// No domínio oficial, o login passa pelo próprio site (proxy /__/auth no server.js),
+// para a tela do Google mostrar "casalnoazul.com.br" em vez do domínio técnico do Firebase.
+const DOMINIOS_PROPRIOS = ['casalnoazul.com.br'];
+const hostAtual = typeof window !== 'undefined' ? window.location.hostname : '';
+const configFirebase = DOMINIOS_PROPRIOS.includes(hostAtual)
+  ? { ...firebaseConfig, authDomain: hostAtual }
+  : firebaseConfig;
+
+const app = !getApps().length ? initializeApp(configFirebase) : getApp();
 export const auth = getAuth(app);
 
 const databaseId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId;
