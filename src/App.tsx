@@ -622,11 +622,11 @@ export default function App() {
             setPrecisaOnboarding(false);
             setAbaAtiva('painel');
             setNotificacaoSincronizacao(
-              `🎉 Família ${estadoInicial.config.nome_familia} criada na nuvem! Toque em "Conectar meu par" nas configurações para gerar o link.`
+              `🎉 Tudo pronto! Lance o primeiro gasto e, quando quiser, convide seu par em "Conectar meu par".`
             );
-            setTimeout(() => setNotificacaoSincronizacao(null), 6000);
+            setTimeout(() => setNotificacaoSincronizacao(null), 7000);
           } catch (err: any) {
-            setNotificacaoSincronizacao(err?.message || 'Erro ao criar família no Firestore.');
+            setNotificacaoSincronizacao(err?.message || 'Não foi possível preparar o app agora. Verifique a internet e tente de novo.');
           } finally {
             setSalvandoOnboarding(false);
           }

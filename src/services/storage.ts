@@ -1005,6 +1005,7 @@ export function aplicarOnboardingNovoCasal(
     saldoColchaoInicial: number;
     tetosCategorias: Record<string, number>;
     limparExemplos: boolean;
+    contasFixasTotal?: number;
   },
   estadoAtual: AppState
 ): AppState {
@@ -1049,7 +1050,19 @@ export function aplicarOnboardingNovoCasal(
     config: novaConfig,
     orcamento: novoOrcamento,
     reserva: novaReserva,
-    fixas: [],
+    fixas: dados.contasFixasTotal && dados.contasFixasTotal > 0
+      ? [
+          {
+            id: gerarUuid(),
+            descricao: 'Contas fixas do mês (total — detalhe depois)',
+            valor: Math.round(dados.contasFixasTotal * 100) / 100,
+            dia_vencimento: 10,
+            categoria: 'Casa e Manutenção',
+            ativo: 'S',
+            pago_mes_ref: ''
+          }
+        ]
+      : [],
     lancamentos: [],
     rendasExtras: [],
     mesAtivo: obterMesAtualPadrao(),
