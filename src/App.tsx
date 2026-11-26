@@ -40,7 +40,7 @@ import { PaginasLegais } from './components/PaginasLegais';
 import { OnboardingCasal } from './components/OnboardingCasal';
 import { GestaoCasalSaaSModal } from './components/GestaoCasalSaaSModal';
 import { verificarAlertas, formatarMoeda } from './services/engine';
-import { iniciarPixel, rastrearInicioTeste, rastrearCheckout, rastrearNavegadorInterno } from './config/rastreamento';
+import { iniciarPixel, rastrearInicioTeste, rastrearCheckout, rastrearNavegadorInterno, rastrearLoginGoogle, rastrearErroLogin } from './config/rastreamento';
 import { AvisoNavegadorInterno, detectarNavegadorInterno, NavegadorInterno } from './components/AvisoNavegadorInterno';
 import {
   PlusCircle,
@@ -93,7 +93,11 @@ export default function App() {
     }
     return carregarEstadoInicial();
   });
-  const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('lancamento');
+  const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>(() => {
+    const params = new URLSearchParams(window.location.search);
+    // Na demonstração (?vitrine=1, sem print) abre no painel, que mostra o "número do dia"
+    return params.get('vitrine') === '1' && params.get('print') !== '1' ? 'painel' : 'lancamento';
+  });
   const [isDevMode] = useState<boolean>(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('dev') === '1' && params.get('vitrine') !== '1';
@@ -340,8 +344,10 @@ export default function App() {
     setErroLogin(null);
     try {
       await googleSignIn();
+      rastrearLoginGoogle();
       setExibirVitrineLanding(false);
     } catch (err: any) {
+      rastrearErroLogin(err?.code || 'desconhecido');
       setErroLogin(err?.message || 'Não foi possível entrar com o Google.');
     } finally {
       setCarregandoLogin(false);
@@ -818,9 +824,17 @@ export default function App() {
         {isVitrineMode && !isPrintMode && (
           <div
             id="banner-modo-demonstracao"
-            className="mt-2 flex items-center justify-center rounded-xl border border-neutral-800 bg-neutral-900/90 px-3 py-1 text-[11px] font-medium text-neutral-400"
+            className="mt-2 flex flex-col sm:flex-row items-center justify-between gap-2 rounded-xl border border-emerald-500/40 bg-emerald-950/40 px-3.5 py-2.5"
           >
-            Modo demonstração
+            <span className="text-xs text-emerald-100 text-center sm:text-left">
+              Demonstração com um casal de exemplo (Ana &amp; Pedro). Toque e explore à vontade.
+            </span>
+            <a
+              href="/#topo"
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 px-3.5 py-1.5 text-xs font-extrabold text-neutral-950"
+            >
+              Testar com os nossos dados · 7 dias grátis
+            </a>
           </div>
         )}
 

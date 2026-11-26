@@ -72,6 +72,30 @@ export function rastrearNavegadorInterno(navegador: string): void {
   }
 }
 
+function rastrearCustom(evento: string, dados?: Record<string, unknown>): void {
+  if (!ativo || !window.fbq) return;
+  try {
+    window.fbq('trackCustom', evento, dados || {});
+  } catch {
+    /* rastreamento nunca pode quebrar o app */
+  }
+}
+
+/** Login com Google concluído (antes da configuração inicial). */
+export function rastrearLoginGoogle(): void {
+  rastrearCustom('LoginGoogle');
+}
+
+/** Login com Google falhou ou foi cancelado. motivo = código do Firebase (ex.: auth/popup-closed-by-user). */
+export function rastrearErroLogin(motivo: string): void {
+  rastrearCustom('ErroLogin', { motivo: motivo || 'desconhecido' });
+}
+
+/** Clique em "Ver o app por dentro" na página de vendas. */
+export function rastrearVerDemonstracao(): void {
+  rastrearCustom('VerDemonstracao');
+}
+
 /** Família criada no onboarding = início do teste grátis. Dispara uma única vez por família. */
 export function rastrearInicioTeste(familyId: string): void {
   const chave = `cna_pixel_registro_${familyId}`;

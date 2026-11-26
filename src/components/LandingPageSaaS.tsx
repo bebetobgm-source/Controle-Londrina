@@ -9,7 +9,7 @@ import {
   Smartphone
 } from 'lucide-react';
 import { formatarMoeda } from '../services/engine';
-import { rastrearLead } from '../config/rastreamento';
+import { rastrearLead, rastrearVerDemonstracao } from '../config/rastreamento';
 
 // ============================================================================
 // CONSTANTES FÁCEIS DE EDITAR (copy do fundador, suporte e listas)
@@ -370,6 +370,17 @@ export const LandingPageSaaS: React.FC<Props> = ({
                   <span>{textoBotaoPrincipal}</span>
                   <ArrowRight className="h-4 w-4 shrink-0" />
                 </button>
+                <a
+                  href="/?vitrine=1"
+                  onClick={e => {
+                    e.preventDefault();
+                    rastrearVerDemonstracao();
+                    setTimeout(() => { window.location.href = '/?vitrine=1'; }, 250);
+                  }}
+                  className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-neutral-700 hover:border-emerald-400/60 bg-neutral-900/60 px-7 py-3.5 text-sm font-semibold text-white transition-colors sm:ml-3"
+                >
+                  Ver o app por dentro, sem cadastro
+                </a>
                 <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-neutral-300">
                   <li className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-400" />Sem cartão</li>
                   <li className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-400" />Sem senha de banco</li>
