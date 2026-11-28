@@ -42,6 +42,7 @@ import { GestaoCasalSaaSModal } from './components/GestaoCasalSaaSModal';
 import { verificarAlertas, formatarMoeda } from './services/engine';
 import { iniciarPixel, rastrearInicioTeste, rastrearCheckout, rastrearNavegadorInterno, rastrearLoginGoogle, rastrearErroLogin } from './config/rastreamento';
 import { AvisoNavegadorInterno, detectarNavegadorInterno, NavegadorInterno } from './components/AvisoNavegadorInterno';
+import { PrimeirosPassos } from './components/PrimeirosPassos';
 import {
   PlusCircle,
   TrendingUp,
@@ -1058,6 +1059,25 @@ export default function App() {
 
         {/* Conteúdo Principal de Acordo com a Aba Ativa */}
         <div className="flex-1">
+          {!isVitrineMode && familyId && (abaAtiva === 'lancamento' || abaAtiva === 'painel') && (
+            <PrimeirosPassos
+              familyId={familyId}
+              temLancamento={appState.lancamentos.length > 0}
+              parConectado={membrosConectados.length >= 2}
+              fixasDetalhadas={appState.fixas.length >= 2}
+              onLancarGasto={() => {
+                setAbaAtiva('lancamento');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              onConvidarPar={() => handleAbrirConfigSaaS('casal')}
+              onDetalharFixas={() => {
+                setAbaAtiva('painel');
+                setTimeout(() => {
+                  document.getElementById('card-fixas-mes')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 150);
+              }}
+            />
+          )}
           {abaAtiva === 'lancamento' && (
             <LancamentoRapido
               appState={appState}
